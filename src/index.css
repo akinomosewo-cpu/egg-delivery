@@ -1,0 +1,19 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: #FAFAF8;
+  -webkit-font-smoothing: antialiased;
+}
+
+input,
+button {
+  outline: none;
+}
+
+input:focus {
+  border-color: #111111 !important;
+}
