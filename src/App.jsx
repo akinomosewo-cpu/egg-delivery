@@ -90,6 +90,22 @@ export default function App() {
     localStorage.removeItem("adminUnlocked");
   };
 
+  const clearTodayData = async () => {
+    const ok = window.confirm(
+      "Clear ALL of today's deliveries, crate returns, and events?\n\nThis cannot be undone. Yesterday and earlier days are not affected."
+    );
+    if (!ok) return;
+    const d = today();
+    const [r1, r2, r3] = await Promise.all([
+      supabase.from("deliveries").delete().eq("delivery_date", d),
+      supabase.from("crate_returns").delete().eq("return_date", d),
+      supabase.from("delivery_events").delete().eq("event_date", d),
+    ]);
+    const err = r1.error || r2.error || r3.error;
+    if (err) alert("Could not clear: " + err.message);
+    loadAll();
+  };
+
   // ---- Actions ----
   const addDelivery = async (row) => {
     const { error } = await supabase.from("deliveries").insert({ ...row, delivery_date: today() });
@@ -143,7 +159,7 @@ export default function App() {
   const submitCrateReturn = async (driverId, count, photoUrls, videoUrl) => {
     const { error } = await supabase
       .from("crate_returns")
-      .insert({ driver_id: driverId, crate_count: count, photo_urls: photoUrls, video_url: videoUrl });
+      .insert({ driver_id: driverId, crate_count: count, photo_urls: photoUrls, video_url: videoUrl, return_date: today() });
     if (error) {
       alert("Could not send: " + error.message);
       return;
@@ -351,10 +367,28 @@ export default function App() {
                   {t.label}
                 </button>
               ))}
+              {(adminTab === "live" || adminTab === "events") && (
+                <button
+                  onClick={clearTodayData}
+                  style={{
+                    marginLeft: "auto",
+                    background: "none",
+                    border: "none",
+                    fontFamily: "inherit",
+                    fontWeight: 700,
+                    fontSize: 12,
+                    color: T.red,
+                    cursor: "pointer",
+                    padding: "8px 2px 10px",
+                  }}
+                >
+                  Clear today
+                </button>
+              )}
               <button
                 onClick={lockAdmin}
                 style={{
-                  marginLeft: "auto",
+                  marginLeft: adminTab === "live" || adminTab === "events" ? 0 : "auto",
                   background: "none",
                   border: "none",
                   fontFamily: "inherit",

@@ -39,7 +39,7 @@ export async function uploadPhoto(file) {
 
 // Log an action to the event timeline (route_started, arrived, delivered, crates_submitted)
 export async function logEvent({ driver_id, customer_id = null, delivery_id = null, event_type, detail = null }) {
-  const { error } = await supabase.from("delivery_events").insert({ driver_id, customer_id, delivery_id, event_type, detail });
+  const { error } = await supabase.from("delivery_events").insert({ driver_id, customer_id, delivery_id, event_type, detail, event_date: today() });
   if (error) console.error("logEvent failed:", error.message);
 }
 
