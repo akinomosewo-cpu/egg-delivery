@@ -14,20 +14,45 @@ const EVENT_ICON = {
   crates_submitted: "📦",
 };
 
+const dayLabel = (dateStr) => {
+  const d = new Date(dateStr + "T00:00:00");
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  const sameDay = (a, b) => a.toDateString() === b.toDateString();
+  if (sameDay(d, today)) return "Today";
+  if (sameDay(d, yesterday)) return "Yesterday";
+  return d.toLocaleDateString("en-NG", { weekday: "long", day: "numeric", month: "long" });
+};
+
 export default function AdminEvents({ drivers, customers, events }) {
   const driverName = (id) => (drivers.find((d) => d.id === id) || {}).name || "A driver";
   const customerName = (id) => (customers.find((c) => c.id === id) || {}).name || "a customer";
 
+  const today = new Date().toLocaleDateString("en-CA");
+  const todaysEvents = events.filter((e) => e.event_date === today);
   const summary = {
-    started: events.filter((e) => e.event_type === "route_started").length,
-    delivered: events.filter((e) => e.event_type === "delivered").length,
-    crateBatches: events.filter((e) => e.event_type === "crates_submitted").length,
-    activeDrivers: new Set(events.map((e) => e.driver_id)).size,
+    started: todaysEvents.filter((e) => e.event_type === "route_started").length,
+    delivered: todaysEvents.filter((e) => e.event_type === "delivered").length,
+    crateBatches: todaysEvents.filter((e) => e.event_type === "crates_submitted").length,
+    activeDrivers: new Set(todaysEvents.map((e) => e.driver_id)).size,
   };
+
+  // Group events by day; each day's events are already ordered oldest-first from the query
+  const groups = [];
+  for (const e of events) {
+    let g = groups.find((g) => g.date === e.event_date);
+    if (!g) {
+      g = { date: e.event_date, items: [] };
+      groups.push(g);
+    }
+    g.items.push(e);
+  }
+  // groups are already newest-day-first because of the query's event_date desc order
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Summary strip */}
+      {/* Today's summary strip */}
       <div
         style={{
           display: "grid",
@@ -51,36 +76,44 @@ export default function AdminEvents({ drivers, customers, events }) {
         ))}
       </div>
 
-      {/* Timeline */}
-      <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, overflow: "hidden" }}>
-        {events.length === 0 && (
-          <div style={{ textAlign: "center", color: T.mute, fontSize: 14, padding: 30 }}>
-            No activity yet today.
+      {/* Timeline grouped by day */}
+      {groups.length === 0 && (
+        <div style={{ textAlign: "center", color: T.mute, fontSize: 14, padding: 30 }}>
+          No activity yet.
+        </div>
+      )}
+
+      {groups.map((g) => (
+        <div key={g.date}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: T.mute, margin: "4px 0 8px 2px" }}>
+            {dayLabel(g.date)}
           </div>
-        )}
-        {events.map((e) => (
-          <div
-            key={e.id}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              padding: "12px 14px",
-              borderBottom: `1px solid ${T.line}`,
-            }}
-          >
-            <div style={{ fontSize: 18, width: 24, textAlign: "center" }}>{EVENT_ICON[e.event_type] || "•"}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 700 }}>
-                {(EVENT_TEXT[e.event_type] || (() => e.event_type))(driverName(e.driver_id), customerName(e.customer_id))}
+          <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, overflow: "hidden" }}>
+            {g.items.map((e) => (
+              <div
+                key={e.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "12px 14px",
+                  borderBottom: `1px solid ${T.line}`,
+                }}
+              >
+                <div style={{ fontSize: 18, width: 24, textAlign: "center" }}>{EVENT_ICON[e.event_type] || "•"}</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>
+                    {(EVENT_TEXT[e.event_type] || (() => e.event_type))(driverName(e.driver_id), customerName(e.customer_id))}
+                  </div>
+                </div>
+                <Tag color={T.mute} bg={T.tan}>
+                  {fmtTime(e.created_at)}
+                </Tag>
               </div>
-            </div>
-            <Tag color={T.mute} bg={T.tan}>
-              {fmtTime(e.created_at)}
-            </Tag>
+            ))}
           </div>
-        ))}
-      </div>
+        </div>
+      ))}
     </div>
   );
 }

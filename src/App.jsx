@@ -32,7 +32,7 @@ export default function App() {
         supabase.from("customers").select("*").eq("active", true).order("name"),
         supabase.from("deliveries").select("*").eq("delivery_date", today()).order("created_at"),
         supabase.from("crate_returns").select("*").eq("return_date", today()),
-        supabase.from("delivery_events").select("*").eq("event_date", today()).order("created_at", { ascending: false }),
+        supabase.from("delivery_events").select("*").order("event_date", { ascending: false }).order("created_at", { ascending: true }).limit(300),
       ]);
       const firstError = drv.error || cus.error || del.error || ret.error || evt.error;
       if (firstError) throw firstError;
@@ -92,7 +92,7 @@ export default function App() {
 
   // ---- Actions ----
   const addDelivery = async (row) => {
-    const { error } = await supabase.from("deliveries").insert(row);
+    const { error } = await supabase.from("deliveries").insert({ ...row, delivery_date: today() });
     if (error) alert("Could not save: " + error.message);
     else loadAll();
   };
@@ -120,14 +120,15 @@ export default function App() {
     loadAll();
   };
 
-  const markDelivered = async (id, crates, photoUrl, ctx) => {
+  const markDelivered = async (id, crates, photoUrls, videoUrl, ctx) => {
     const { error } = await supabase
       .from("deliveries")
       .update({
         status: "delivered",
         crates_delivered: crates,
         eggs_delivered: 0,
-        photo_url: photoUrl,
+        photo_urls: photoUrls,
+        video_url: videoUrl,
         delivered_at: new Date().toISOString(),
       })
       .eq("id", id);
@@ -139,10 +140,10 @@ export default function App() {
     loadAll();
   };
 
-  const submitCrateReturn = async (driverId, count, photoUrls) => {
+  const submitCrateReturn = async (driverId, count, photoUrls, videoUrl) => {
     const { error } = await supabase
       .from("crate_returns")
-      .insert({ driver_id: driverId, crate_count: count, photo_urls: photoUrls });
+      .insert({ driver_id: driverId, crate_count: count, photo_urls: photoUrls, video_url: videoUrl });
     if (error) {
       alert("Could not send: " + error.message);
       return;

@@ -1,4 +1,4 @@
-import { T, Tag, fmtQty, fmtTime } from "./ui";
+import { T, Tag, fmtQty, fmtTime, fmtDateTime } from "./ui";
 
 export default function AdminDashboard({ drivers, customers, deliveries, crateReturns }) {
   return (
@@ -56,7 +56,7 @@ export default function AdminDashboard({ drivers, customers, deliveries, crateRe
                     <div style={{ fontWeight: 700, fontSize: 14 }}>{c ? c.name : "…"}</div>
                     {d.status === "delivered" ? (
                       <Tag color={T.green} bg={T.greenBg}>
-                        ✓ {fmtTime(d.delivered_at)}
+                        ✓ {fmtDateTime(d.delivered_at)}
                       </Tag>
                     ) : d.status === "arrived" ? (
                       <Tag color={T.yolkDark} bg={T.greenBg}>
@@ -84,21 +84,23 @@ export default function AdminDashboard({ drivers, customers, deliveries, crateRe
                       </>
                     )}
                   </div>
-                  {d.photo_url && (
-                    <a href={d.photo_url} target="_blank" rel="noreferrer">
-                      <img
-                        src={d.photo_url}
-                        alt="delivery proof"
-                        style={{
-                          width: 64,
-                          height: 64,
-                          objectFit: "cover",
-                          borderRadius: 8,
-                          marginTop: 6,
-                          border: `1.5px solid ${T.line}`,
-                        }}
-                      />
-                    </a>
+                  {((d.photo_urls && d.photo_urls.length > 0) || d.video_url) && (
+                    <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                      {(d.photo_urls || []).map((p, i) => (
+                        <a key={i} href={p} target="_blank" rel="noreferrer">
+                          <img
+                            src={p}
+                            alt={`delivery proof ${i + 1}`}
+                            style={{ width: 54, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }}
+                          />
+                        </a>
+                      ))}
+                      {d.video_url && (
+                        <a href={d.video_url} target="_blank" rel="noreferrer">
+                          <video src={d.video_url} style={{ width: 90, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }} muted />
+                        </a>
+                      )}
+                    </div>
                   )}
                 </div>
               );
@@ -107,7 +109,7 @@ export default function AdminDashboard({ drivers, customers, deliveries, crateRe
             {ret && (
               <div style={{ padding: "12px 14px", background: "#F5FBE6" }}>
                 <div style={{ fontWeight: 800, fontSize: 13, color: T.yolkDark }}>
-                  Crates returned: {ret.crate_count} · {fmtTime(ret.submitted_at)}
+                  Crates returned: {ret.crate_count} · {fmtDateTime(ret.submitted_at)}
                 </div>
                 <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
                   {(ret.photo_urls || []).map((p, i) => (
@@ -115,16 +117,15 @@ export default function AdminDashboard({ drivers, customers, deliveries, crateRe
                       <img
                         src={p}
                         alt={`crates ${i + 1}`}
-                        style={{
-                          width: 54,
-                          height: 54,
-                          objectFit: "cover",
-                          borderRadius: 8,
-                          border: `1.5px solid ${T.line}`,
-                        }}
+                        style={{ width: 54, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }}
                       />
                     </a>
                   ))}
+                  {ret.video_url && (
+                    <a href={ret.video_url} target="_blank" rel="noreferrer">
+                      <video src={ret.video_url} style={{ width: 90, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }} muted />
+                    </a>
+                  )}
                 </div>
               </div>
             )}

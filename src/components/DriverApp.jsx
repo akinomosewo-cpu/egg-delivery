@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { T, Btn, Tag, NumInput, PhotoButton, fmtQty } from "./ui";
+import { T, Btn, Tag, NumInput, MediaCapture, fmtQty } from "./ui";
 import { uploadPhoto } from "../supabase";
 
 const STATUS_LABEL = {
@@ -13,9 +13,11 @@ export default function DriverApp({ drivers, customers, deliveries, crateReturns
   const [driverId, setDriverId] = useState(null);
   const [openStop, setOpenStop] = useState(null);
   const [dc, setDc] = useState("");
-  const [photoUrl, setPhotoUrl] = useState(null);
+  const [stopPhotos, setStopPhotos] = useState([]);
+  const [stopVideo, setStopVideo] = useState(null);
   const [retCount, setRetCount] = useState("");
   const [retPhotos, setRetPhotos] = useState([]);
+  const [retVideo, setRetVideo] = useState(null);
   const [busy, setBusy] = useState(false);
 
   if (!driverId) {
@@ -126,34 +128,40 @@ export default function DriverApp({ drivers, customers, deliveries, crateReturns
                 <NumInput label="Crates delivered" value={dc} onChange={setDc} width={120} />
               </div>
               <div style={{ marginBottom: 18 }}>
-                <PhotoButton
-                  photos={photoUrl ? [photoUrl] : []}
-                  onUploaded={setPhotoUrl}
+                <MediaCapture
+                  photos={stopPhotos}
+                  onAddPhoto={(url) => setStopPhotos((p) => [...p, url])}
+                  onRemovePhoto={(i) => setStopPhotos((p) => p.filter((_, idx) => idx !== i))}
+                  video={stopVideo}
+                  onSetVideo={setStopVideo}
+                  onRemoveVideo={() => setStopVideo(null)}
                   upload={uploadPhoto}
-                  label="Photo at this stop (required)"
+                  maxPhotos={5}
+                  label="Photos at this stop (at least 1 required)"
                 />
               </div>
               <Btn
                 full
                 kind="green"
-                disabled={!photoUrl || busy}
+                disabled={stopPhotos.length === 0 || busy}
                 onClick={async () => {
                   setBusy(true);
-                  await markDelivered(stop.id, dc === "" ? stop.crates_assigned : dc, photoUrl, {
+                  await markDelivered(stop.id, dc === "" ? stop.crates_assigned : dc, stopPhotos, stopVideo, {
                     driver_id: driverId,
                     customer_id: stop.customer_id,
                   });
                   setBusy(false);
                   setOpenStop(null);
                   setDc("");
-                  setPhotoUrl(null);
+                  setStopPhotos([]);
+                  setStopVideo(null);
                 }}
               >
                 {busy ? "Saving…" : "✓ Mark delivered"}
               </Btn>
-              {!photoUrl && (
+              {stopPhotos.length === 0 && (
                 <div style={{ fontSize: 12, color: T.mute, textAlign: "center", marginTop: 8 }}>
-                  Take a photo to finish this stop
+                  Take at least one photo to finish this stop
                 </div>
               )}
             </>
@@ -190,7 +198,8 @@ export default function DriverApp({ drivers, customers, deliveries, crateReturns
               if (!isDone) {
                 setOpenStop(d.id);
                 setDc(d.crates_assigned);
-                setPhotoUrl(null);
+                setStopPhotos([]);
+                setStopVideo(null);
               }
             }}
             style={{
@@ -230,10 +239,15 @@ export default function DriverApp({ drivers, customers, deliveries, crateReturns
             <NumInput label="Crates collected" value={retCount} onChange={setRetCount} width={120} />
           </div>
           <div style={{ marginBottom: 16 }}>
-            <PhotoButton
+            <MediaCapture
               photos={retPhotos}
-              onUploaded={(url) => setRetPhotos((x) => [...x, url])}
+              onAddPhoto={(url) => setRetPhotos((x) => [...x, url])}
+              onRemovePhoto={(i) => setRetPhotos((p) => p.filter((_, idx) => idx !== i))}
+              video={retVideo}
+              onSetVideo={setRetVideo}
+              onRemoveVideo={() => setRetVideo(null)}
               upload={uploadPhoto}
+              maxPhotos={5}
               label="Photos of the crates"
             />
           </div>
@@ -242,10 +256,11 @@ export default function DriverApp({ drivers, customers, deliveries, crateReturns
             disabled={busy || retCount === "" || retPhotos.length === 0}
             onClick={async () => {
               setBusy(true);
-              await submitCrateReturn(driverId, retCount, retPhotos);
+              await submitCrateReturn(driverId, retCount, retPhotos, retVideo);
               setBusy(false);
               setRetCount("");
               setRetPhotos([]);
+              setRetVideo(null);
             }}
           >
             {busy ? "Sending…" : "Send crate count to office"}

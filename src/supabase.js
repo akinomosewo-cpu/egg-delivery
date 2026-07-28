@@ -42,3 +42,4 @@ export function notify(title, body) {
     }
   }
 }
+

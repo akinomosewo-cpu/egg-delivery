@@ -24,6 +24,11 @@ export const fmtQty = (crates, eggs) => {
 export const fmtTime = (ts) =>
   ts ? new Date(ts).toLocaleTimeString("en-NG", { hour: "2-digit", minute: "2-digit" }) : "";
 
+export const fmtDateTime = (ts) =>
+  ts
+    ? new Date(ts).toLocaleString("en-NG", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+    : "";
+
 export const Btn = ({ children, onClick, kind = "primary", full, small, disabled }) => (
   <button
     onClick={onClick}
@@ -112,13 +117,24 @@ export const TextInput = ({ label, value, onChange, placeholder }) => (
   </label>
 );
 
-// Camera button: uploads immediately on capture, reports the public URL up
-export const PhotoButton = ({ photos, onUploaded, upload, label }) => {
-  const ref = useRef(null);
+// Media capture: up to N photos + one optional video
+export const MediaCapture = ({
+  photos,
+  onAddPhoto,
+  onRemovePhoto,
+  video,
+  onSetVideo,
+  onRemoveVideo,
+  upload,
+  maxPhotos = 5,
+  label = "Photos",
+}) => {
+  const photoRef = useRef(null);
+  const videoRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
-  const handleFile = async (e) => {
+  const handlePhoto = async (e) => {
     const f = e.target.files && e.target.files[0];
     e.target.value = "";
     if (!f) return;
@@ -126,7 +142,7 @@ export const PhotoButton = ({ photos, onUploaded, upload, label }) => {
     setErr(null);
     try {
       const url = await upload(f);
-      onUploaded(url);
+      onAddPhoto(url);
     } catch (ex) {
       setErr("Upload failed — check network and retry");
       console.error(ex);
@@ -135,46 +151,80 @@ export const PhotoButton = ({ photos, onUploaded, upload, label }) => {
     }
   };
 
+  const handleVideo = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const url = await upload(f);
+      onSetVideo(url);
+    } catch (ex) {
+      setErr("Video upload failed — check network and retry");
+      console.error(ex);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div>
-      <input
-        ref={ref}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        style={{ display: "none" }}
-        onChange={handleFile}
-      />
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+      <input ref={photoRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={handlePhoto} />
+      <input ref={videoRef} type="file" accept="video/*" capture="environment" style={{ display: "none" }} onChange={handleVideo} />
+
+      <div style={{ fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 6 }}>
+        {label} ({photos.length}/{maxPhotos})
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
         {photos.map((p, i) => (
-          <img
-            key={i}
-            src={p}
-            alt={`photo ${i + 1}`}
-            style={{ width: 54, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }}
-          />
+          <div key={i} style={{ position: "relative" }}>
+            <img src={p} alt={`photo ${i + 1}`} style={{ width: 54, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }} />
+            <button
+              onClick={() => onRemovePhoto(i)}
+              style={{
+                position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: 99,
+                border: "none", background: T.red, color: "#fff", fontSize: 12, fontWeight: 800,
+                cursor: "pointer", lineHeight: "20px", padding: 0,
+              }}
+            >
+              ✕
+            </button>
+          </div>
         ))}
+        {photos.length < maxPhotos && (
+          <button
+            onClick={() => !busy && photoRef.current && photoRef.current.click()}
+            style={{
+              width: 54, height: 54, borderRadius: 8, border: `2px dashed ${T.ink}`,
+              background: "#F5FBE6", color: T.ink, fontSize: busy ? 12 : 22, fontWeight: 700,
+              cursor: busy ? "wait" : "pointer", fontFamily: "inherit",
+            }}
+          >
+            {busy ? "…" : "📷"}
+          </button>
+        )}
+      </div>
+
+      <div style={{ fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 6 }}>Video (optional)</div>
+      {video ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <video src={video} style={{ width: 90, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }} muted />
+          <Btn kind="danger" small onClick={onRemoveVideo}>Remove video</Btn>
+        </div>
+      ) : (
         <button
-          onClick={() => !busy && ref.current && ref.current.click()}
+          onClick={() => !busy && videoRef.current && videoRef.current.click()}
           style={{
-            width: 54,
-            height: 54,
-            borderRadius: 8,
-            border: `2px dashed ${T.ink}`,
-            background: "#F5FBE6",
-            color: T.ink,
-            fontSize: busy ? 12 : 22,
-            fontWeight: 700,
-            cursor: busy ? "wait" : "pointer",
-            fontFamily: "inherit",
+            padding: "9px 14px", borderRadius: 8, border: `2px dashed ${T.line}`, background: "#fff",
+            color: T.mute, fontSize: 13, fontWeight: 700, cursor: busy ? "wait" : "pointer", fontFamily: "inherit",
           }}
         >
-          {busy ? "…" : "📷"}
+          {busy ? "Uploading…" : "＋ Add a short video"}
         </button>
-        <span style={{ fontSize: 12, color: err ? T.red : T.mute, fontWeight: 600 }}>
-          {err || (busy ? "Uploading…" : label)}
-        </span>
-      </div>
+      )}
+
+      {err && <div style={{ fontSize: 12, color: T.red, fontWeight: 700, marginTop: 6 }}>{err}</div>}
     </div>
   );
 };
