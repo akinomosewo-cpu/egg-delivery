@@ -8,11 +8,30 @@ export const supabase = createClient(
 // Today's date as YYYY-MM-DD in local time
 export const today = () => new Date().toLocaleDateString("en-CA");
 
-// Upload a photo file to storage, return its public URL
+// Upload a photo or video to storage, return its public URL.
+// Guards against the "stuck forever" problem on weak connections: rejects
+// files that are too large outright, and times out any upload that hangs.
 export async function uploadPhoto(file) {
-  const ext = file.name.split(".").pop() || "jpg";
+  const isVideo = file.type.startsWith("video/");
+  const maxBytes = isVideo ? 20 * 1024 * 1024 : 8 * 1024 * 1024; // 20MB video, 8MB photo
+  if (file.size > maxBytes) {
+    const maxMb = Math.round(maxBytes / (1024 * 1024));
+    throw new Error(
+      isVideo
+        ? `That video is too large (over ${maxMb}MB). Please record a shorter clip and try again.`
+        : `That photo is too large (over ${maxMb}MB). Try again — most phone cameras save well under this.`
+    );
+  }
+
+  const ext = file.name.split(".").pop() || (isVideo ? "mp4" : "jpg");
   const path = `${today()}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  const { error } = await supabase.storage.from("delivery-photos").upload(path, file);
+
+  const uploadPromise = supabase.storage.from("delivery-photos").upload(path, file);
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error("Upload took too long — check your connection and try again.")), 30000)
+  );
+
+  const { error } = await Promise.race([uploadPromise, timeoutPromise]);
   if (error) throw error;
   const { data } = supabase.storage.from("delivery-photos").getPublicUrl(path);
   return data.publicUrl;
@@ -42,4 +61,3 @@ export function notify(title, body) {
     }
   }
 }
-

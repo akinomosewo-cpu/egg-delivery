@@ -131,23 +131,24 @@ export const MediaCapture = ({
 }) => {
   const photoRef = useRef(null);
   const videoRef = useRef(null);
-  const [busy, setBusy] = useState(false);
+  const [busyPhoto, setBusyPhoto] = useState(false);
+  const [busyVideo, setBusyVideo] = useState(false);
   const [err, setErr] = useState(null);
 
   const handlePhoto = async (e) => {
     const f = e.target.files && e.target.files[0];
     e.target.value = "";
     if (!f) return;
-    setBusy(true);
+    setBusyPhoto(true);
     setErr(null);
     try {
       const url = await upload(f);
       onAddPhoto(url);
     } catch (ex) {
-      setErr("Upload failed — check network and retry");
+      setErr(ex.message || "Upload failed — check network and retry");
       console.error(ex);
     } finally {
-      setBusy(false);
+      setBusyPhoto(false);
     }
   };
 
@@ -155,16 +156,16 @@ export const MediaCapture = ({
     const f = e.target.files && e.target.files[0];
     e.target.value = "";
     if (!f) return;
-    setBusy(true);
+    setBusyVideo(true);
     setErr(null);
     try {
       const url = await upload(f);
       onSetVideo(url);
     } catch (ex) {
-      setErr("Video upload failed — check network and retry");
+      setErr(ex.message || "Video upload failed — check network and retry");
       console.error(ex);
     } finally {
-      setBusy(false);
+      setBusyVideo(false);
     }
   };
 
@@ -194,14 +195,14 @@ export const MediaCapture = ({
         ))}
         {photos.length < maxPhotos && (
           <button
-            onClick={() => !busy && photoRef.current && photoRef.current.click()}
+            onClick={() => !busyPhoto && photoRef.current && photoRef.current.click()}
             style={{
               width: 54, height: 54, borderRadius: 8, border: `2px dashed ${T.ink}`,
-              background: "#F5FBE6", color: T.ink, fontSize: busy ? 12 : 22, fontWeight: 700,
-              cursor: busy ? "wait" : "pointer", fontFamily: "inherit",
+              background: "#F5FBE6", color: T.ink, fontSize: busyPhoto ? 12 : 22, fontWeight: 700,
+              cursor: busyPhoto ? "wait" : "pointer", fontFamily: "inherit",
             }}
           >
-            {busy ? "…" : "📷"}
+            {busyPhoto ? "…" : "📷"}
           </button>
         )}
       </div>
@@ -214,13 +215,13 @@ export const MediaCapture = ({
         </div>
       ) : (
         <button
-          onClick={() => !busy && videoRef.current && videoRef.current.click()}
+          onClick={() => !busyVideo && videoRef.current && videoRef.current.click()}
           style={{
             padding: "9px 14px", borderRadius: 8, border: `2px dashed ${T.line}`, background: "#fff",
-            color: T.mute, fontSize: 13, fontWeight: 700, cursor: busy ? "wait" : "pointer", fontFamily: "inherit",
+            color: T.mute, fontSize: 13, fontWeight: 700, cursor: busyVideo ? "wait" : "pointer", fontFamily: "inherit",
           }}
         >
-          {busy ? "Uploading…" : "＋ Add a short video"}
+          {busyVideo ? "Uploading… (large videos can take a while)" : "＋ Add a short video"}
         </button>
       )}
 
