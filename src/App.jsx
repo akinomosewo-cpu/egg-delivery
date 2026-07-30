@@ -136,7 +136,7 @@ export default function App() {
     loadAll();
   };
 
-  const markDelivered = async (id, crates, photoUrls, videoUrl, ctx) => {
+  const markDelivered = async (id, crates, photoUrls, videoUrl, missingEggs, missingCrates, signatureUrl, ctx) => {
     const { error } = await supabase
       .from("deliveries")
       .update({
@@ -145,6 +145,9 @@ export default function App() {
         eggs_delivered: 0,
         photo_urls: photoUrls,
         video_url: videoUrl,
+        missing_eggs: missingEggs,
+        missing_crates: missingCrates,
+        signature_url: signatureUrl,
         delivered_at: new Date().toISOString(),
       })
       .eq("id", id);

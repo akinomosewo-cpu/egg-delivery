@@ -84,8 +84,17 @@ export default function AdminDashboard({ drivers, customers, deliveries, crateRe
                       </>
                     )}
                   </div>
-                  {((d.photo_urls && d.photo_urls.length > 0) || d.video_url) && (
-                    <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                  {d.status === "delivered" && (d.missing_crates > 0 || d.missing_eggs > 0) && (
+                    <div style={{ marginTop: 4 }}>
+                      <Tag color={T.red} bg="#FBEAE6">
+                        ⚠ Missing: {d.missing_crates > 0 ? `${d.missing_crates} crate${d.missing_crates !== 1 ? "s" : ""}` : ""}
+                        {d.missing_crates > 0 && d.missing_eggs > 0 ? " + " : ""}
+                        {d.missing_eggs > 0 ? `${d.missing_eggs} egg${d.missing_eggs !== 1 ? "s" : ""}` : ""}
+                      </Tag>
+                    </div>
+                  )}
+                  {((d.photo_urls && d.photo_urls.length > 0) || d.video_url || d.signature_url) && (
+                    <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>
                       {(d.photo_urls || []).map((p, i) => (
                         <a key={i} href={p} target="_blank" rel="noreferrer">
                           <img
@@ -98,6 +107,15 @@ export default function AdminDashboard({ drivers, customers, deliveries, crateRe
                       {d.video_url && (
                         <a href={d.video_url} target="_blank" rel="noreferrer">
                           <video src={d.video_url} style={{ width: 90, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }} muted />
+                        </a>
+                      )}
+                      {d.signature_url && (
+                        <a href={d.signature_url} target="_blank" rel="noreferrer">
+                          <img
+                            src={d.signature_url}
+                            alt="customer signature"
+                            style={{ width: 90, height: 54, objectFit: "contain", background: "#fff", borderRadius: 8, border: `1.5px solid ${T.line}` }}
+                          />
                         </a>
                       )}
                     </div>

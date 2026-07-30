@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, forwardRef, useImperativeHandle } from "react";
 
 export const T = {
   ink: "#111111",
@@ -229,3 +229,108 @@ export const MediaCapture = ({
     </div>
   );
 };
+
+// Finger/mouse signature pad — draws to a canvas, uploads as a PNG on confirm
+export const SignaturePad = ({ onCapture, upload }) => {
+  const canvasRef = useRef(null);
+  const drawing = useRef(false);
+  const hasDrawn = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const getPos = (e, canvas) => {
+    const rect = canvas.getBoundingClientRect();
+    const t = e.touches && e.touches[0];
+    const clientX = t ? t.clientX : e.clientX;
+    const clientY = t ? t.clientY : e.clientY;
+    return {
+      x: ((clientX - rect.left) / rect.width) * canvas.width,
+      y: ((clientY - rect.top) / rect.height) * canvas.height,
+    };
+  };
+
+  const start = (e) => {
+    e.preventDefault();
+    drawing.current = true;
+    const c = canvasRef.current;
+    const ctx = c.getContext("2d");
+    const p = getPos(e, c);
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+  };
+  const move = (e) => {
+    if (!drawing.current) return;
+    e.preventDefault();
+    const c = canvasRef.current;
+    const ctx = c.getContext("2d");
+    const p = getPos(e, c);
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "#111111";
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+    hasDrawn.current = true;
+  };
+  const end = () => {
+    drawing.current = false;
+  };
+  const clear = () => {
+    const c = canvasRef.current;
+    c.getContext("2d").clearRect(0, 0, c.width, c.height);
+    hasDrawn.current = false;
+  };
+
+  const confirm = () => {
+    if (!hasDrawn.current) return;
+    canvasRef.current.toBlob(async (blob) => {
+      if (!blob) return;
+      setBusy(true);
+      setErr(null);
+      try {
+        const file = new File([blob], "signature.png", { type: "image/png" });
+        const url = await upload(file);
+        onCapture(url);
+      } catch (ex) {
+        setErr(ex.message || "Could not save signature — try again");
+        console.error(ex);
+      } finally {
+        setBusy(false);
+      }
+    }, "image/png");
+  };
+
+  return (
+    <div>
+      <canvas
+        ref={canvasRef}
+        width={300}
+        height={120}
+        style={{
+          width: "100%",
+          height: 120,
+          border: `1.5px solid ${T.line}`,
+          borderRadius: 8,
+          background: "#fff",
+          touchAction: "none",
+        }}
+        onMouseDown={start}
+        onMouseMove={move}
+        onMouseUp={end}
+        onMouseLeave={end}
+        onTouchStart={start}
+        onTouchMove={move}
+        onTouchEnd={end}
+      />
+      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+        <Btn kind="ghost" small onClick={clear}>
+          Clear
+        </Btn>
+        <Btn small onClick={confirm} disabled={busy}>
+          {busy ? "Saving…" : "Use this signature"}
+        </Btn>
+      </div>
+      {err && <div style={{ fontSize: 12, color: T.red, fontWeight: 700, marginTop: 6 }}>{err}</div>}
+    </div>
+  );
+};
+

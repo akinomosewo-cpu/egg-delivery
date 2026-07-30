@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { T, Btn, Tag, NumInput, MediaCapture, fmtQty } from "./ui";
+import { T, Btn, Tag, NumInput, MediaCapture, SignaturePad, fmtQty } from "./ui";
 import { uploadPhoto } from "../supabase";
 
 const STATUS_LABEL = {
@@ -15,6 +15,10 @@ export default function DriverApp({ drivers, customers, deliveries, crateReturns
   const [dc, setDc] = useState("");
   const [stopPhotos, setStopPhotos] = useState([]);
   const [stopVideo, setStopVideo] = useState(null);
+  const [missingEggs, setMissingEggs] = useState("");
+  const [missingCrates, setMissingCrates] = useState("");
+  const [signatureUrl, setSignatureUrl] = useState(null);
+  const [signatureSkipped, setSignatureSkipped] = useState(false);
   const [retCount, setRetCount] = useState("");
   const [retPhotos, setRetPhotos] = useState([]);
   const [retVideo, setRetVideo] = useState(null);
@@ -127,6 +131,11 @@ export default function DriverApp({ drivers, customers, deliveries, crateReturns
               <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
                 <NumInput label="Crates delivered" value={dc} onChange={setDc} width={120} />
               </div>
+              <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+                <NumInput label="Missing crates" value={missingCrates} onChange={setMissingCrates} width={120} />
+                <NumInput label="Missing / broken eggs" value={missingEggs} onChange={setMissingEggs} width={140} />
+              </div>
+
               <div style={{ marginBottom: 18 }}>
                 <MediaCapture
                   photos={stopPhotos}
@@ -140,28 +149,71 @@ export default function DriverApp({ drivers, customers, deliveries, crateReturns
                   label="Photos at this stop (at least 1 required)"
                 />
               </div>
+
+              <div style={{ marginBottom: 18 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Customer signature</div>
+                {signatureSkipped ? (
+                  <div style={{ fontSize: 13, color: T.mute, fontWeight: 600 }}>
+                    Skipped — customer not available.{" "}
+                    <button
+                      onClick={() => setSignatureSkipped(false)}
+                      style={{ background: "none", border: "none", color: T.ink, fontWeight: 700, textDecoration: "underline", cursor: "pointer", fontFamily: "inherit", padding: 0 }}
+                    >
+                      Undo
+                    </button>
+                  </div>
+                ) : signatureUrl ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <img src={signatureUrl} alt="customer signature" style={{ width: 110, height: 46, objectFit: "contain", background: "#fff", border: `1.5px solid ${T.line}`, borderRadius: 6 }} />
+                    <Btn kind="ghost" small onClick={() => setSignatureUrl(null)}>
+                      Redo
+                    </Btn>
+                  </div>
+                ) : (
+                  <>
+                    <SignaturePad upload={uploadPhoto} onCapture={setSignatureUrl} />
+                    <button
+                      onClick={() => setSignatureSkipped(true)}
+                      style={{ marginTop: 8, background: "none", border: "none", color: T.mute, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}
+                    >
+                      Customer not available to sign
+                    </button>
+                  </>
+                )}
+              </div>
+
               <Btn
                 full
                 kind="green"
-                disabled={stopPhotos.length === 0 || busy}
+                disabled={stopPhotos.length === 0 || (!signatureUrl && !signatureSkipped) || busy}
                 onClick={async () => {
                   setBusy(true);
-                  await markDelivered(stop.id, dc === "" ? stop.crates_assigned : dc, stopPhotos, stopVideo, {
-                    driver_id: driverId,
-                    customer_id: stop.customer_id,
-                  });
+                  await markDelivered(
+                    stop.id,
+                    dc === "" ? stop.crates_assigned : dc,
+                    stopPhotos,
+                    stopVideo,
+                    missingEggs === "" ? 0 : missingEggs,
+                    missingCrates === "" ? 0 : missingCrates,
+                    signatureUrl,
+                    { driver_id: driverId, customer_id: stop.customer_id }
+                  );
                   setBusy(false);
                   setOpenStop(null);
                   setDc("");
                   setStopPhotos([]);
                   setStopVideo(null);
+                  setMissingEggs("");
+                  setMissingCrates("");
+                  setSignatureUrl(null);
+                  setSignatureSkipped(false);
                 }}
               >
                 {busy ? "Saving…" : "✓ Mark delivered"}
               </Btn>
-              {stopPhotos.length === 0 && (
+              {(stopPhotos.length === 0 || (!signatureUrl && !signatureSkipped)) && (
                 <div style={{ fontSize: 12, color: T.mute, textAlign: "center", marginTop: 8 }}>
-                  Take at least one photo to finish this stop
+                  {stopPhotos.length === 0 ? "Take at least one photo" : "Get a signature (or mark customer unavailable)"} to finish this stop
                 </div>
               )}
             </>
@@ -200,6 +252,9 @@ export default function DriverApp({ drivers, customers, deliveries, crateReturns
                 setDc(d.crates_assigned);
                 setStopPhotos([]);
                 setStopVideo(null);
+                setMissingEggs("");
+                setSignatureUrl(null);
+                setSignatureSkipped(false);
               }
             }}
             style={{

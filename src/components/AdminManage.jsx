@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { T, Btn, TextInput } from "./ui";
+import { getStorageUsage } from "../supabase";
 
 export default function AdminManage({ drivers, customers, addDriver, deactivateDriver, addCustomer, deactivateCustomer }) {
   const [dName, setDName] = useState("");
@@ -7,6 +8,24 @@ export default function AdminManage({ drivers, customers, addDriver, deactivateD
   const [cPhone, setCPhone] = useState("");
   const [cArea, setCArea] = useState("");
   const [busy, setBusy] = useState(false);
+  const [storage, setStorage] = useState(null); // { totalBytes, fileCount }
+  const [storageChecking, setStorageChecking] = useState(false);
+  const [storageError, setStorageError] = useState(null);
+
+  const FREE_TIER_BYTES = 1024 * 1024 * 1024; // 1GB — Supabase free tier default
+
+  const checkStorage = async () => {
+    setStorageChecking(true);
+    setStorageError(null);
+    try {
+      const usage = await getStorageUsage();
+      setStorage(usage);
+    } catch (e) {
+      setStorageError(e.message || "Could not check storage");
+    } finally {
+      setStorageChecking(false);
+    }
+  };
 
   const saveDriver = async () => {
     if (!dName.trim()) return;
@@ -86,6 +105,54 @@ export default function AdminManage({ drivers, customers, addDriver, deactivateD
             Add customer
           </Btn>
         </div>
+      </div>
+
+      {/* Storage usage */}
+      <div style={section}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div style={{ fontWeight: 800, fontSize: 15 }}>Storage (photos &amp; videos)</div>
+          <Btn kind="ghost" small onClick={checkStorage} disabled={storageChecking}>
+            {storageChecking ? "Checking…" : "Check now"}
+          </Btn>
+        </div>
+
+        {storageError && <div style={{ fontSize: 13, color: T.red, fontWeight: 700 }}>{storageError}</div>}
+
+        {!storage && !storageError && (
+          <div style={{ fontSize: 13, color: T.mute }}>Tap "Check now" to see how much space is used.</div>
+        )}
+
+        {storage && (() => {
+          const usedMb = storage.totalBytes / (1024 * 1024);
+          const pct = Math.min(100, (storage.totalBytes / FREE_TIER_BYTES) * 100);
+          const nearFull = pct >= 80;
+          return (
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, fontWeight: 700, marginBottom: 6 }}>
+                <span>{usedMb.toFixed(1)} MB used · {storage.fileCount} files</span>
+                <span style={{ color: nearFull ? T.red : T.mute }}>{pct.toFixed(1)}%</span>
+              </div>
+              <div style={{ height: 10, borderRadius: 99, background: T.tan, overflow: "hidden" }}>
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${pct}%`,
+                    background: nearFull ? T.red : T.yolk,
+                    borderRadius: 99,
+                  }}
+                />
+              </div>
+              <div style={{ fontSize: 11, color: T.mute, marginTop: 6 }}>
+                Estimate against Supabase's free-tier 1GB limit — actual limit may differ if you're on a paid plan.
+              </div>
+              {nearFull && (
+                <div style={{ fontSize: 12, color: T.red, fontWeight: 700, marginTop: 6 }}>
+                  ⚠ Getting close to the free-tier limit — consider upgrading or clearing old photos/videos.
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       <div style={{ fontSize: 12, color: T.mute, textAlign: "center" }}>
