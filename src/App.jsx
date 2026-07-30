@@ -5,6 +5,8 @@ import AdminPlan from "./components/AdminPlan";
 import AdminDashboard from "./components/AdminDashboard";
 import AdminEvents from "./components/AdminEvents";
 import AdminManage from "./components/AdminManage";
+import AdminReports from "./components/AdminReports";
+import AdminMissingCrates from "./components/AdminMissingCrates";
 import DriverApp from "./components/DriverApp";
 
 const ADMIN_PIN = "8791"; // change this to change the admin password
@@ -17,9 +19,11 @@ export default function App() {
   const [pinError, setPinError] = useState(false);
   const [drivers, setDrivers] = useState([]);
   const [customers, setCustomers] = useState([]);
+  const [helpers, setHelpers] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
   const [crateReturns, setCrateReturns] = useState([]);
   const [events, setEvents] = useState([]);
+  const [openDebts, setOpenDebts] = useState([]); // crates owed by customers, not yet collected back
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState(null);
@@ -27,20 +31,24 @@ export default function App() {
   // ---- Load everything for today ----
   const loadAll = useCallback(async () => {
     try {
-      const [drv, cus, del, ret, evt] = await Promise.all([
+      const [drv, cus, hlp, del, ret, evt, debts] = await Promise.all([
         supabase.from("drivers").select("*").eq("active", true).order("name"),
         supabase.from("customers").select("*").eq("active", true).order("name"),
+        supabase.from("helpers").select("*").eq("active", true).order("name"),
         supabase.from("deliveries").select("*").eq("delivery_date", today()).order("created_at"),
         supabase.from("crate_returns").select("*").eq("return_date", today()),
         supabase.from("delivery_events").select("*").order("event_date", { ascending: false }).order("created_at", { ascending: true }).limit(300),
+        supabase.from("deliveries").select("*").gt("missing_crates", 0).eq("missing_crates_resolved", false).order("delivery_date"),
       ]);
-      const firstError = drv.error || cus.error || del.error || ret.error || evt.error;
+      const firstError = drv.error || cus.error || hlp.error || del.error || ret.error || evt.error || debts.error;
       if (firstError) throw firstError;
       setDrivers(drv.data);
       setCustomers(cus.data);
+      setHelpers(hlp.data);
       setDeliveries(del.data);
       setCrateReturns(ret.data);
       setEvents(evt.data);
+      setOpenDebts(debts.data);
       setError(null);
     } catch (e) {
       console.error(e);
@@ -59,6 +67,7 @@ export default function App() {
       .on("postgres_changes", { event: "*", schema: "public", table: "crate_returns" }, loadAll)
       .on("postgres_changes", { event: "*", schema: "public", table: "drivers" }, loadAll)
       .on("postgres_changes", { event: "*", schema: "public", table: "customers" }, loadAll)
+      .on("postgres_changes", { event: "*", schema: "public", table: "helpers" }, loadAll)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "delivery_events" }, (payload) => {
         loadAll();
         const row = payload.new;
@@ -117,6 +126,29 @@ export default function App() {
     const { error } = await supabase.from("deliveries").delete().eq("id", id).eq("status", "pending");
     if (error) alert("Could not remove: " + error.message);
     else loadAll();
+  };
+
+  // Claim an unassigned delivery — guarded so two drivers can't grab the same one.
+  // Returns true if the claim succeeded, false if someone else beat them to it.
+  const claimDelivery = async (id, driverId, helperIds) => {
+    const { data, error } = await supabase
+      .from("deliveries")
+      .update({ driver_id: driverId, helper_ids: helperIds, claimed_at: new Date().toISOString() })
+      .eq("id", id)
+      .is("driver_id", null)
+      .select();
+    if (error) {
+      alert("Could not claim: " + error.message);
+      loadAll();
+      return false;
+    }
+    if (!data || data.length === 0) {
+      loadAll();
+      return false; // someone else already claimed it
+    }
+    await logEvent({ driver_id: driverId, customer_id: data[0].customer_id, delivery_id: id, event_type: "claimed" });
+    loadAll();
+    return true;
   };
 
   // Route status: pending -> in_transit -> arrived
@@ -193,6 +225,34 @@ export default function App() {
     const { error } = await supabase.from("customers").update({ active: false }).eq("id", id);
     if (error) alert("Could not remove: " + error.message);
     else loadAll();
+  };
+
+  const addHelper = async (name) => {
+    const { error } = await supabase.from("helpers").insert({ name });
+    if (error) alert("Could not add: " + error.message);
+    else loadAll();
+  };
+
+  const deactivateHelper = async (id) => {
+    const { error } = await supabase.from("helpers").update({ active: false }).eq("id", id);
+    if (error) alert("Could not remove: " + error.message);
+    else loadAll();
+  };
+
+  // Mark a customer's owed crates as collected back
+  const resolveMissingCrates = async (deliveryId, driverId) => {
+    const { error } = await supabase
+      .from("deliveries")
+      .update({ missing_crates_resolved: true, missing_crates_resolved_at: new Date().toISOString() })
+      .eq("id", deliveryId);
+    if (error) {
+      alert("Could not update: " + error.message);
+      return;
+    }
+    if (driverId) {
+      await logEvent({ driver_id: driverId, delivery_id: deliveryId, event_type: "debt_resolved" });
+    }
+    loadAll();
   };
 
   // ---- Layout ----
@@ -349,6 +409,8 @@ export default function App() {
                 { key: "plan", label: "Plan" },
                 { key: "live", label: "Live" },
                 { key: "events", label: "Events" },
+                { key: "missing", label: "Missing" },
+                { key: "reports", label: "Reports" },
                 { key: "manage", label: "Manage" },
               ].map((t) => (
                 <button
@@ -409,6 +471,7 @@ export default function App() {
               <AdminPlan
                 drivers={drivers}
                 customers={customers}
+                helpers={helpers}
                 deliveries={deliveries}
                 addDelivery={addDelivery}
                 removeDelivery={removeDelivery}
@@ -417,19 +480,32 @@ export default function App() {
               <AdminDashboard
                 drivers={drivers}
                 customers={customers}
+                helpers={helpers}
                 deliveries={deliveries}
                 crateReturns={crateReturns}
               />
             ) : adminTab === "events" ? (
               <AdminEvents drivers={drivers} customers={customers} events={events} />
+            ) : adminTab === "missing" ? (
+              <AdminMissingCrates
+                customers={customers}
+                drivers={drivers}
+                openDebts={openDebts}
+                resolveMissingCrates={resolveMissingCrates}
+              />
+            ) : adminTab === "reports" ? (
+              <AdminReports drivers={drivers} customers={customers} helpers={helpers} />
             ) : (
               <AdminManage
                 drivers={drivers}
                 customers={customers}
+                helpers={helpers}
                 addDriver={addDriver}
                 deactivateDriver={deactivateDriver}
                 addCustomer={addCustomer}
                 deactivateCustomer={deactivateCustomer}
+                addHelper={addHelper}
+                deactivateHelper={deactivateHelper}
               />
             )}
           </>
@@ -437,11 +513,15 @@ export default function App() {
           <DriverApp
             drivers={drivers}
             customers={customers}
+            helpers={helpers}
             deliveries={deliveries}
             crateReturns={crateReturns}
+            openDebts={openDebts}
+            claimDelivery={claimDelivery}
             updateStatus={updateStatus}
             markDelivered={markDelivered}
             submitCrateReturn={submitCrateReturn}
+            resolveMissingCrates={resolveMissingCrates}
           />
         )}
       </div>

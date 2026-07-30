@@ -9,8 +9,22 @@ const STATUS_LABEL = {
   delivered: "Delivered",
 };
 
-export default function DriverApp({ drivers, customers, deliveries, crateReturns, updateStatus, markDelivered, submitCrateReturn }) {
+export default function DriverApp({
+  drivers,
+  customers,
+  helpers,
+  deliveries,
+  crateReturns,
+  openDebts,
+  claimDelivery,
+  updateStatus,
+  markDelivered,
+  submitCrateReturn,
+  resolveMissingCrates,
+}) {
   const [driverId, setDriverId] = useState(null);
+  const [claimingId, setClaimingId] = useState(null);
+  const [pickedHelpers, setPickedHelpers] = useState([]);
   const [openStop, setOpenStop] = useState(null);
   const [dc, setDc] = useState("");
   const [stopPhotos, setStopPhotos] = useState([]);
@@ -54,15 +68,101 @@ export default function DriverApp({ drivers, customers, deliveries, crateReturns
   }
 
   const drv = drivers.find((d) => d.id === driverId);
+  const available = deliveries.filter((d) => !d.driver_id && d.status === "pending");
   const myStops = deliveries.filter((d) => d.driver_id === driverId);
   const pending = myStops.filter((d) => d.status !== "delivered");
   const done = myStops.filter((d) => d.status === "delivered");
   const myReturn = crateReturns.find((r) => r.driver_id === driverId);
   const stop = myStops.find((d) => d.id === openStop);
+  const claiming = available.find((d) => d.id === claimingId);
 
+  const toggleHelper = (id) => {
+    setPickedHelpers((cur) => {
+      if (cur.includes(id)) return cur.filter((x) => x !== id);
+      if (cur.length >= 2) return cur; // capped at 2
+      return [...cur, id];
+    });
+  };
+
+  // ---- Claiming a delivery: pick 0-2 helpers, then confirm ----
+  if (claiming) {
+    const c = customers.find((x) => x.id === claiming.customer_id);
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <Btn kind="ghost" small onClick={() => { setClaimingId(null); setPickedHelpers([]); }}>
+          ← Back
+        </Btn>
+        <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 18 }}>
+          <div style={{ fontWeight: 800, fontSize: 18 }}>{c ? c.name : "…"}</div>
+          <div style={{ fontSize: 13, color: T.mute, marginBottom: 12 }}>{c && c.area}</div>
+          <div style={{ background: T.tan, borderRadius: 8, padding: "10px 12px", fontSize: 14, fontWeight: 700, marginBottom: 18 }}>
+            {fmtQty(claiming.crates_assigned, claiming.eggs_assigned)}
+          </div>
+
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+            Bringing anyone with you? (up to 2, optional)
+          </div>
+          {helpers.length === 0 ? (
+            <div style={{ fontSize: 13, color: T.mute, marginBottom: 16 }}>
+              No helpers added yet — ask the Admin to add names in Manage.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 18 }}>
+              {helpers.map((h) => {
+                const picked = pickedHelpers.includes(h.id);
+                return (
+                  <button
+                    key={h.id}
+                    onClick={() => toggleHelper(h.id)}
+                    style={{
+                      padding: "9px 14px",
+                      borderRadius: 999,
+                      border: `1.5px solid ${picked ? T.ink : T.line}`,
+                      background: picked ? T.greenBg : "#fff",
+                      color: T.ink,
+                      fontWeight: 700,
+                      fontSize: 13,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    {picked ? "✓ " : ""}{h.name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <Btn
+            full
+            kind="green"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              const ok = await claimDelivery(claiming.id, driverId, pickedHelpers);
+              setBusy(false);
+              if (ok) {
+                setClaimingId(null);
+                setPickedHelpers([]);
+              } else {
+                alert("Someone else just claimed this delivery. Pick another one.");
+                setClaimingId(null);
+                setPickedHelpers([]);
+              }
+            }}
+          >
+            {busy ? "Claiming…" : "Claim this delivery"}
+          </Btn>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Stop detail (claimed by me) ----
   if (stop) {
     const c = customers.find((x) => x.id === stop.customer_id);
     const name = c ? c.name : "this customer";
+    const stopHelperNames = (stop.helper_ids || []).map((id) => (helpers.find((h) => h.id === id) || {}).name).filter(Boolean);
 
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -79,6 +179,9 @@ export default function DriverApp({ drivers, customers, deliveries, crateReturns
               {STATUS_LABEL[stop.status]}
             </Tag>
           </div>
+          {stopHelperNames.length > 0 && (
+            <div style={{ fontSize: 12, color: T.mute, marginBottom: 6 }}>With {stopHelperNames.join(", ")}</div>
+          )}
           {c && c.phone && (
             <a href={`tel:${c.phone}`} style={{ fontSize: 13, fontWeight: 700, color: T.ink }}>
               Call {c.phone}
@@ -223,119 +326,198 @@ export default function DriverApp({ drivers, customers, deliveries, crateReturns
     );
   }
 
+  // ---- Main screen: available pool + my claimed route ----
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontWeight: 800, fontSize: 17 }}>
-          {drv ? drv.name : ""}'s route · {done.length}/{myStops.length}
-        </div>
+        <div style={{ fontWeight: 800, fontSize: 17 }}>{drv ? drv.name : ""}</div>
         <Btn kind="ghost" small onClick={() => setDriverId(null)}>
           Switch
         </Btn>
       </div>
 
-      {myStops.length === 0 && (
-        <div style={{ textAlign: "center", color: T.mute, fontSize: 14, padding: 30 }}>
-          No Deliveries Yet. Please ask the Admin.
+      {/* Available pool */}
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: T.mute, marginBottom: 8 }}>
+          Available deliveries ({available.length})
         </div>
-      )}
+        {available.length === 0 && (
+          <div style={{ textAlign: "center", color: T.mute, fontSize: 14, padding: 20, background: T.card, borderRadius: 12, border: `1.5px solid ${T.line}` }}>
+            Nothing to claim right now.
+          </div>
+        )}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {available.map((d) => {
+            const c = customers.find((x) => x.id === d.customer_id);
+            return (
+              <button
+                key={d.id}
+                onClick={() => setClaimingId(d.id)}
+                style={{
+                  textAlign: "left",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "14px 16px",
+                  borderRadius: 12,
+                  border: `1.5px dashed ${T.yolkDark}`,
+                  background: "#F5FBE6",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  width: "100%",
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 15, color: T.ink }}>{c ? c.name : "…"}</div>
+                  <div style={{ fontSize: 13, color: T.mute }}>
+                    {c && c.area ? `${c.area} · ` : ""}
+                    {fmtQty(d.crates_assigned, d.eggs_assigned)}
+                  </div>
+                </div>
+                <div style={{ fontWeight: 800, fontSize: 13, color: T.ink }}>Claim →</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
-      {myStops.map((d) => {
-        const c = customers.find((x) => x.id === d.customer_id);
-        const isDone = d.status === "delivered";
-        return (
-          <button
-            key={d.id}
-            onClick={() => {
-              if (!isDone) {
-                setOpenStop(d.id);
-                setDc(d.crates_assigned);
-                setStopPhotos([]);
-                setStopVideo(null);
-                setMissingEggs("");
-                setSignatureUrl(null);
-                setSignatureSkipped(false);
-              }
-            }}
-            style={{
-              textAlign: "left",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              padding: "14px 16px",
-              borderRadius: 12,
-              border: `1.5px solid ${isDone ? T.green : T.line}`,
-              background: isDone ? T.greenBg : T.card,
-              cursor: isDone ? "default" : "pointer",
-              fontFamily: "inherit",
-              width: "100%",
-            }}
-          >
-            <div>
-              <div style={{ fontWeight: 800, fontSize: 15, color: T.ink }}>{c ? c.name : "…"}</div>
-              <div style={{ fontSize: 13, color: T.mute }}>
-                {c && c.area ? `${c.area} · ` : ""}
-                {fmtQty(d.crates_assigned, d.eggs_assigned)}
-                {!isDone && ` · ${STATUS_LABEL[d.status]}`}
-              </div>
+      {/* My route */}
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: T.mute, marginBottom: 8 }}>
+          My route ({done.length}/{myStops.length})
+        </div>
+
+        {myStops.length === 0 && (
+          <div style={{ textAlign: "center", color: T.mute, fontSize: 14, padding: 20 }}>
+            You haven't claimed any deliveries yet.
+          </div>
+        )}
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {myStops.map((d) => {
+            const c = customers.find((x) => x.id === d.customer_id);
+            const isDone = d.status === "delivered";
+            const helperNames = (d.helper_ids || []).map((id) => (helpers.find((h) => h.id === id) || {}).name).filter(Boolean);
+            return (
+              <button
+                key={d.id}
+                onClick={() => {
+                  if (!isDone) {
+                    setOpenStop(d.id);
+                    setDc(d.crates_assigned);
+                    setStopPhotos([]);
+                    setStopVideo(null);
+                  }
+                }}
+                style={{
+                  textAlign: "left",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "14px 16px",
+                  borderRadius: 12,
+                  border: `1.5px solid ${isDone ? T.green : T.line}`,
+                  background: isDone ? T.greenBg : T.card,
+                  cursor: isDone ? "default" : "pointer",
+                  fontFamily: "inherit",
+                  width: "100%",
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 15, color: T.ink }}>{c ? c.name : "…"}</div>
+                  <div style={{ fontSize: 13, color: T.mute }}>
+                    {c && c.area ? `${c.area} · ` : ""}
+                    {fmtQty(d.crates_assigned, d.eggs_assigned)}
+                    {!isDone && ` · ${STATUS_LABEL[d.status]}`}
+                    {helperNames.length > 0 && ` · with ${helperNames.join(", ")}`}
+                  </div>
+                </div>
+                <div style={{ fontSize: 22 }}>{isDone ? "✅" : d.status === "arrived" ? "📍" : d.status === "in_transit" ? "🚐" : "○"}</div>
+              </button>
+            );
+          })}
+        </div>
+
+        {myStops.length > 0 && pending.length === 0 && !myReturn && (
+          <div style={{ background: "#F5FBE6", border: `1.5px solid ${T.ink}`, borderRadius: 12, padding: 16, marginTop: 10 }}>
+            <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>All stops done</div>
+            <div style={{ fontSize: 13, color: T.mute, marginBottom: 12 }}>
+              Count the crates you collected back and photograph them.
             </div>
-            <div style={{ fontSize: 22 }}>{isDone ? "✅" : d.status === "arrived" ? "📍" : d.status === "in_transit" ? "🚐" : "○"}</div>
-          </button>
-        );
-      })}
+            <div style={{ marginBottom: 12 }}>
+              <NumInput label="Crates collected" value={retCount} onChange={setRetCount} width={120} />
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <MediaCapture
+                photos={retPhotos}
+                onAddPhoto={(url) => setRetPhotos((x) => [...x, url])}
+                onRemovePhoto={(i) => setRetPhotos((p) => p.filter((_, idx) => idx !== i))}
+                video={retVideo}
+                onSetVideo={setRetVideo}
+                onRemoveVideo={() => setRetVideo(null)}
+                upload={uploadPhoto}
+                maxPhotos={5}
+                label="Photos of the crates"
+              />
+            </div>
+            <Btn
+              full
+              disabled={busy || retCount === "" || retPhotos.length === 0}
+              onClick={async () => {
+                setBusy(true);
+                await submitCrateReturn(driverId, retCount, retPhotos, retVideo);
+                setBusy(false);
+                setRetCount("");
+                setRetPhotos([]);
+                setRetVideo(null);
+              }}
+            >
+              {busy ? "Sending…" : "Send crate count to office"}
+            </Btn>
+          </div>
+        )}
 
-      {myStops.length > 0 && pending.length === 0 && !myReturn && (
-        <div style={{ background: "#F5FBE6", border: `1.5px solid ${T.ink}`, borderRadius: 12, padding: 16 }}>
-          <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>All stops done</div>
-          <div style={{ fontSize: 13, color: T.mute, marginBottom: 12 }}>
-            Count the crates you collected back and photograph them.
-          </div>
-          <div style={{ marginBottom: 12 }}>
-            <NumInput label="Crates collected" value={retCount} onChange={setRetCount} width={120} />
-          </div>
-          <div style={{ marginBottom: 16 }}>
-            <MediaCapture
-              photos={retPhotos}
-              onAddPhoto={(url) => setRetPhotos((x) => [...x, url])}
-              onRemovePhoto={(i) => setRetPhotos((p) => p.filter((_, idx) => idx !== i))}
-              video={retVideo}
-              onSetVideo={setRetVideo}
-              onRemoveVideo={() => setRetVideo(null)}
-              upload={uploadPhoto}
-              maxPhotos={5}
-              label="Photos of the crates"
-            />
-          </div>
-          <Btn
-            full
-            disabled={busy || retCount === "" || retPhotos.length === 0}
-            onClick={async () => {
-              setBusy(true);
-              await submitCrateReturn(driverId, retCount, retPhotos, retVideo);
-              setBusy(false);
-              setRetCount("");
-              setRetPhotos([]);
-              setRetVideo(null);
+        {myReturn && (
+          <div
+            style={{
+              background: T.greenBg,
+              border: `1.5px solid ${T.green}`,
+              borderRadius: 12,
+              padding: 16,
+              textAlign: "center",
+              fontWeight: 800,
+              color: T.green,
+              marginTop: 10,
             }}
           >
-            {busy ? "Sending…" : "Send crate count to office"}
-          </Btn>
-        </div>
-      )}
+            Route closed · {myReturn.crate_count} crates sent to office ✓
+          </div>
+        )}
+      </div>
 
-      {myReturn && (
-        <div
-          style={{
-            background: T.greenBg,
-            border: `1.5px solid ${T.green}`,
-            borderRadius: 12,
-            padding: 16,
-            textAlign: "center",
-            fontWeight: 800,
-            color: T.green,
-          }}
-        >
-          Route closed · {myReturn.crate_count} crates sent to office ✓
+      {/* Missing crates owed by customers — visible to all drivers */}
+      {openDebts.length > 0 && (
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: T.mute, marginBottom: 8 }}>
+            Crates still owed by customers ({openDebts.length})
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {openDebts.map((debt) => {
+              const c = customers.find((x) => x.id === debt.customer_id);
+              return (
+                <div key={debt.id} style={{ background: "#FBEAE6", border: `1.5px solid ${T.red}`, borderRadius: 12, padding: 14 }}>
+                  <div style={{ fontWeight: 800, fontSize: 14 }}>{c ? c.name : "…"}</div>
+                  <div style={{ fontSize: 12, color: T.mute, marginBottom: 10 }}>
+                    Owes {debt.missing_crates} crate{debt.missing_crates !== 1 ? "s" : ""}
+                    {c && c.area ? ` · ${c.area}` : ""}
+                  </div>
+                  <Btn small full kind="green" onClick={() => resolveMissingCrates(debt.id, driverId)}>
+                    Collected the crates
+                  </Btn>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

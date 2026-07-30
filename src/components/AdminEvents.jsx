@@ -1,6 +1,8 @@
 import { T, Tag, fmtTime } from "./ui";
 
 const EVENT_TEXT = {
+  debt_resolved: (drv) => `${drv} collected owed crates back from a customer`,
+  claimed: (drv, cust) => `${drv} claimed the delivery to ${cust}`,
   route_started: (drv, cust) => `${drv} started the route to ${cust}`,
   arrived: (drv, cust) => `${drv} arrived at ${cust}`,
   delivered: (drv, cust) => `${drv} delivered to ${cust}`,
@@ -8,6 +10,8 @@ const EVENT_TEXT = {
 };
 
 const EVENT_ICON = {
+  debt_resolved: "📥",
+  claimed: "🤝",
   route_started: "🚐",
   arrived: "📍",
   delivered: "✅",
@@ -32,6 +36,7 @@ export default function AdminEvents({ drivers, customers, events }) {
   const today = new Date().toLocaleDateString("en-CA");
   const todaysEvents = events.filter((e) => e.event_date === today);
   const summary = {
+    claimed: todaysEvents.filter((e) => e.event_type === "claimed").length,
     started: todaysEvents.filter((e) => e.event_type === "route_started").length,
     delivered: todaysEvents.filter((e) => e.event_type === "delivered").length,
     crateBatches: todaysEvents.filter((e) => e.event_type === "crates_submitted").length,
@@ -64,7 +69,7 @@ export default function AdminEvents({ drivers, customers, events }) {
         }}
       >
         {[
-          ["Drivers active", summary.activeDrivers],
+          ["Claimed", summary.claimed],
           ["Routes started", summary.started],
           ["Delivered", summary.delivered],
           ["Crate reports", summary.crateBatches],

@@ -1,6 +1,6 @@
 import { T, Tag, fmtQty, fmtTime, fmtDateTime } from "./ui";
 
-export default function AdminDashboard({ drivers, customers, deliveries, crateReturns }) {
+export default function AdminDashboard({ drivers, customers, helpers, deliveries, crateReturns }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -18,6 +18,27 @@ export default function AdminDashboard({ drivers, customers, deliveries, crateRe
           Live — updates as drivers work
         </span>
       </div>
+
+      {(() => {
+        const unclaimed = deliveries.filter((d) => !d.driver_id && d.status === "pending");
+        if (unclaimed.length === 0) return null;
+        return (
+          <div style={{ background: T.card, border: `1.5px dashed ${T.yolkDark}`, borderRadius: 12, overflow: "hidden" }}>
+            <div style={{ padding: "12px 14px", background: "#F5FBE6", fontWeight: 800, fontSize: 15 }}>
+              Waiting to be claimed ({unclaimed.length})
+            </div>
+            {unclaimed.map((d) => {
+              const c = customers.find((x) => x.id === d.customer_id);
+              return (
+                <div key={d.id} style={{ padding: "10px 14px", borderBottom: `1px solid ${T.line}`, display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ fontWeight: 700, fontSize: 14 }}>{c ? c.name : "…"}</span>
+                  <span style={{ fontSize: 13, color: T.mute }}>{fmtQty(d.crates_assigned, d.eggs_assigned)}</span>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       {drivers.map((drv) => {
         const list = deliveries.filter((d) => d.driver_id === drv.id);
@@ -84,6 +105,11 @@ export default function AdminDashboard({ drivers, customers, deliveries, crateRe
                       </>
                     )}
                   </div>
+                  {(d.helper_ids || []).length > 0 && (
+                    <div style={{ fontSize: 12, color: T.mute, marginTop: 2 }}>
+                      With {(d.helper_ids || []).map((id) => (helpers.find((h) => h.id === id) || {}).name).filter(Boolean).join(", ")}
+                    </div>
+                  )}
                   {d.status === "delivered" && (d.missing_crates > 0 || d.missing_eggs > 0) && (
                     <div style={{ marginTop: 4 }}>
                       <Tag color={T.red} bg="#FBEAE6">

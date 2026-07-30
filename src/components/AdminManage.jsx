@@ -2,11 +2,12 @@ import { useState } from "react";
 import { T, Btn, TextInput } from "./ui";
 import { getStorageUsage } from "../supabase";
 
-export default function AdminManage({ drivers, customers, addDriver, deactivateDriver, addCustomer, deactivateCustomer }) {
+export default function AdminManage({ drivers, customers, helpers, addDriver, deactivateDriver, addCustomer, deactivateCustomer, addHelper, deactivateHelper }) {
   const [dName, setDName] = useState("");
   const [cName, setCName] = useState("");
   const [cPhone, setCPhone] = useState("");
   const [cArea, setCArea] = useState("");
+  const [hName, setHName] = useState("");
   const [busy, setBusy] = useState(false);
   const [storage, setStorage] = useState(null); // { totalBytes, fileCount }
   const [storageChecking, setStorageChecking] = useState(false);
@@ -32,6 +33,14 @@ export default function AdminManage({ drivers, customers, addDriver, deactivateD
     setBusy(true);
     await addDriver(dName.trim());
     setDName("");
+    setBusy(false);
+  };
+
+  const saveHelper = async () => {
+    if (!hName.trim()) return;
+    setBusy(true);
+    await addHelper(hName.trim());
+    setHName("");
     setBusy(false);
   };
 
@@ -103,6 +112,33 @@ export default function AdminManage({ drivers, customers, addDriver, deactivateD
           </div>
           <Btn onClick={saveCustomer} disabled={busy || !cName.trim()}>
             Add customer
+          </Btn>
+        </div>
+      </div>
+
+      {/* Helpers */}
+      <div style={section}>
+        <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 12 }}>
+          Helpers <span style={{ color: T.mute, fontWeight: 600, fontSize: 12 }}>({helpers.length})</span>
+        </div>
+        <div style={{ fontSize: 12, color: T.mute, marginBottom: 10 }}>
+          People drivers can bring along — they'll show up as options when a driver claims a delivery.
+        </div>
+        {helpers.map((h) => (
+          <div key={h.id} style={row}>
+            <span style={{ fontWeight: 700, fontSize: 14 }}>{h.name}</span>
+            <Btn kind="danger" small onClick={() => deactivateHelper(h.id)}>
+              Remove
+            </Btn>
+          </div>
+        ))}
+        {helpers.length === 0 && (
+          <div style={{ fontSize: 13, color: T.mute, padding: "6px 0" }}>No helpers added yet.</div>
+        )}
+        <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "flex-end" }}>
+          <TextInput label="New helper name" value={hName} onChange={setHName} placeholder="e.g. Emeka" />
+          <Btn onClick={saveHelper} disabled={busy || !hName.trim()}>
+            Add
           </Btn>
         </div>
       </div>
