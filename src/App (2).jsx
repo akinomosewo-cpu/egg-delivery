@@ -14,7 +14,7 @@ const ADMIN_PIN = "8791"; // change this to change the admin password
 export default function App() {
   const [device, setDevice] = useState("driver"); // driver-first: workers open this most
   const [adminTab, setAdminTab] = useState("plan");
-  const [adminUnlocked, setAdminUnlocked] = useState(() => localStorage.getItem("adminUnlocked") === "true");
+  const [adminUnlocked, setAdminUnlocked] = useState(false); // always asks for the PIN fresh
   const [pinEntry, setPinEntry] = useState("");
   const [pinError, setPinError] = useState(false);
   const [drivers, setDrivers] = useState([]);
@@ -89,15 +89,9 @@ export default function App() {
     setTimeout(() => setSyncing(false), 400);
   };
 
-  const unlockAdmin = () => {
-    setAdminUnlocked(true);
-    localStorage.setItem("adminUnlocked", "true");
-  };
+  const unlockAdmin = () => setAdminUnlocked(true);
 
-  const lockAdmin = () => {
-    setAdminUnlocked(false);
-    localStorage.removeItem("adminUnlocked");
-  };
+  const lockAdmin = () => setAdminUnlocked(false);
 
   const clearTodayData = async () => {
     const ok = window.confirm(
@@ -281,7 +275,7 @@ export default function App() {
             ].map((t) => (
               <button
                 key={t.key}
-                onClick={() => setDevice(t.key)}
+                onClick={() => { setDevice(t.key); if (t.key === "driver") lockAdmin(); }}
                 style={{
                   flex: 1,
                   padding: "10px 0",
