@@ -95,6 +95,7 @@ export default function AdminDashboard({ drivers, customers, helpers, deliveries
                 d.status === "delivered" &&
                 (d.crates_delivered !== d.crates_assigned || d.eggs_delivered !== d.eggs_assigned);
               const isOpen = expandedId === d.id;
+              const isPartial = d.status !== "delivered" && (d.crates_delivered || 0) > 0 && (d.crates_delivered || 0) < d.crates_assigned;
               const helperNames = (d.helper_ids || []).map((id) => (helpers.find((h) => h.id === id) || {}).name).filter(Boolean);
               const sizes = [
                 ["Big large", d.big_large_delivered],
@@ -115,6 +116,10 @@ export default function AdminDashboard({ drivers, customers, helpers, deliveries
                       {d.status === "delivered" ? (
                         <Tag color={T.green} bg={T.greenBg}>
                           ✓ {fmtDateTime(d.delivered_at)}
+                        </Tag>
+                      ) : isPartial ? (
+                        <Tag color={T.red} bg="#FBEAE6">
+                          🔁 Partial: {d.crates_delivered}/{d.crates_assigned}
                         </Tag>
                       ) : d.status === "arrived" ? (
                         <Tag color={T.yolkDark} bg={T.greenBg}>
@@ -138,6 +143,14 @@ export default function AdminDashboard({ drivers, customers, helpers, deliveries
                           <span style={{ color: short ? T.red : T.green, fontWeight: 700 }}>
                             Delivered {fmtQty(d.crates_delivered || 0, d.eggs_delivered || 0)}
                             {short && " ⚠ mismatch"}
+                          </span>
+                        </>
+                      )}
+                      {isPartial && (
+                        <>
+                          {" · "}
+                          <span style={{ color: T.red, fontWeight: 700 }}>
+                            {d.crates_assigned - d.crates_delivered} crates still owed
                           </span>
                         </>
                       )}

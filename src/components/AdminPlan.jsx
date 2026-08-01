@@ -4,13 +4,11 @@ import { T, Btn, Tag, NumInput, fmtQty } from "./ui";
 export default function AdminPlan({ drivers, customers, helpers, deliveries, addDelivery, removeDelivery }) {
   const [search, setSearch] = useState("");
   const [customerId, setCustomerId] = useState(null);
-  const [crates, setCrates] = useState("");
   const [bigLarge, setBigLarge] = useState("");
   const [smallLarge, setSmallLarge] = useState("");
   const [medium, setMedium] = useState("");
   const [pullet, setPullet] = useState("");
   const [extra, setExtra] = useState("");
-  const [showSizes, setShowSizes] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const matches = search
@@ -24,12 +22,16 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
   const chosen = customers.find((c) => c.id === customerId);
   const totalCrates = deliveries.reduce((s, d) => s + d.crates_assigned, 0);
 
+  // Crates are auto-calculated from the size breakdown (30 eggs per crate), Extra excluded
+  const eggTotal = (Number(bigLarge) || 0) + (Number(smallLarge) || 0) + (Number(medium) || 0) + (Number(pullet) || 0);
+  const crates = eggTotal > 0 ? Math.ceil(eggTotal / 30) : 0;
+
   const submit = async () => {
-    if (!chosen || (crates || 0) === 0) return;
+    if (!chosen || crates === 0) return;
     setSaving(true);
     await addDelivery({
       customer_id: chosen.id,
-      crates_assigned: crates || 0,
+      crates_assigned: crates,
       eggs_assigned: 0,
       big_large_assigned: bigLarge || 0,
       small_large_assigned: smallLarge || 0,
@@ -40,7 +42,6 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
     setSaving(false);
     setSearch("");
     setCustomerId(null);
-    setCrates("");
     setBigLarge("");
     setSmallLarge("");
     setMedium("");
@@ -155,31 +156,38 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", marginBottom: 12 }}>
-          <NumInput label="Crates" value={crates} onChange={setCrates} width={120} />
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 8 }}>
+            Egg size breakdown — Crates fills in automatically (30 eggs per crate, Extra not counted)
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <NumInput label="Big large" value={bigLarge} onChange={setBigLarge} width={90} />
+            <NumInput label="Small large" value={smallLarge} onChange={setSmallLarge} width={90} />
+            <NumInput label="Medium" value={medium} onChange={setMedium} width={90} />
+            <NumInput label="Pullet" value={pullet} onChange={setPullet} width={90} />
+            <NumInput label="Extra" value={extra} onChange={setExtra} width={90} />
+          </div>
         </div>
 
-        {!showSizes ? (
-          <button
-            onClick={() => setShowSizes(true)}
-            style={{ background: "none", border: "none", color: T.mute, fontSize: 12, fontWeight: 700, textDecoration: "underline", cursor: "pointer", fontFamily: "inherit", padding: 0, marginBottom: 16 }}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 4 }}>Crates (auto-calculated)</div>
+          <div
+            style={{
+              width: 120,
+              padding: "10px 10px",
+              fontSize: 16,
+              fontWeight: 800,
+              color: T.ink,
+              border: `1.5px solid ${T.line}`,
+              borderRadius: 8,
+              background: T.tan,
+            }}
           >
-            + Add egg size breakdown (optional)
-          </button>
-        ) : (
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 8 }}>Egg size breakdown (optional)</div>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <NumInput label="Big large" value={bigLarge} onChange={setBigLarge} width={90} />
-              <NumInput label="Small large" value={smallLarge} onChange={setSmallLarge} width={90} />
-              <NumInput label="Medium" value={medium} onChange={setMedium} width={90} />
-              <NumInput label="Pullet" value={pullet} onChange={setPullet} width={90} />
-              <NumInput label="Extra" value={extra} onChange={setExtra} width={90} />
-            </div>
+            {crates}
           </div>
-        )}
+        </div>
 
-        <Btn full onClick={submit} disabled={saving || !chosen || (crates || 0) === 0}>
+        <Btn full onClick={submit} disabled={saving || !chosen || crates === 0}>
           {saving ? "Posting…" : "Post delivery"}
         </Btn>
       </div>
