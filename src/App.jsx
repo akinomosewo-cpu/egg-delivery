@@ -172,18 +172,63 @@ export default function App() {
     loadAll();
   };
 
-  const markDelivered = async (id, crates, photoUrls, videoUrl, missingEggs, missingCrates, signatureUrl, ctx) => {
+  // Save a partial drop-off (driver couldn't carry the full order in one trip).
+  // Accumulates onto whatever's already been delivered so far; does NOT complete the delivery.
+  const submitPartialDelivery = async (id, addedCrates, newPhotos, ctx) => {
+    const { data: cur, error: e1 } = await supabase
+      .from("deliveries")
+      .select("crates_delivered, photo_urls")
+      .eq("id", id)
+      .single();
+    if (e1) {
+      alert("Could not save: " + e1.message);
+      return;
+    }
+    const newTotal = (cur.crates_delivered || 0) + Number(addedCrates || 0);
+    const mergedPhotos = [...(cur.photo_urls || []), ...newPhotos];
+    const { error } = await supabase
+      .from("deliveries")
+      .update({ crates_delivered: newTotal, photo_urls: mergedPhotos, status: "arrived" })
+      .eq("id", id);
+    if (error) {
+      alert("Could not save: " + error.message);
+      return;
+    }
+    await logEvent({ driver_id: ctx.driver_id, customer_id: ctx.customer_id, delivery_id: id, event_type: "partial_delivered" });
+    loadAll();
+  };
+
+  // Complete a delivery — called once cumulative delivered crates reach the assigned amount
+  const markDelivered = async (id, addedCrates, photoUrls, videoUrl, missingEggs, missingCrates, signatureUrl, sizes, payment, receiptUrl, ctx) => {
+    const { data: cur, error: e1 } = await supabase
+      .from("deliveries")
+      .select("crates_delivered, photo_urls")
+      .eq("id", id)
+      .single();
+    if (e1) {
+      alert("Could not save: " + e1.message);
+      return;
+    }
+    const finalCrates = (cur.crates_delivered || 0) + Number(addedCrates || 0);
+    const mergedPhotos = [...(cur.photo_urls || []), ...photoUrls];
     const { error } = await supabase
       .from("deliveries")
       .update({
         status: "delivered",
-        crates_delivered: crates,
+        crates_delivered: finalCrates,
         eggs_delivered: 0,
-        photo_urls: photoUrls,
+        photo_urls: mergedPhotos,
         video_url: videoUrl,
         missing_eggs: missingEggs,
         missing_crates: missingCrates,
         signature_url: signatureUrl,
+        big_large_delivered: sizes.bigLarge,
+        small_large_delivered: sizes.smallLarge,
+        medium_delivered: sizes.medium,
+        pullet_delivered: sizes.pullet,
+        extra_delivered: sizes.extra,
+        payment_collected: payment,
+        receipt_url: receiptUrl,
         delivered_at: new Date().toISOString(),
       })
       .eq("id", id);
@@ -193,6 +238,7 @@ export default function App() {
     }
     await logEvent({ driver_id: ctx.driver_id, customer_id: ctx.customer_id, delivery_id: id, event_type: "delivered" });
     loadAll();
+
   };
 
   const submitCrateReturn = async (driverId, count, photoUrls, videoUrl) => {
@@ -523,6 +569,7 @@ export default function App() {
             openDebts={openDebts}
             claimDelivery={claimDelivery}
             updateStatus={updateStatus}
+            submitPartialDelivery={submitPartialDelivery}
             markDelivered={markDelivered}
             submitCrateReturn={submitCrateReturn}
             resolveMissingCrates={resolveMissingCrates}

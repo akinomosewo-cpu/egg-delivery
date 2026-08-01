@@ -1,6 +1,7 @@
 import { T, Tag, fmtTime } from "./ui";
 
 const EVENT_TEXT = {
+  partial_delivered: (drv, cust) => `${drv} dropped off part of the order at ${cust} (more coming)`,
   debt_resolved: (drv) => `${drv} collected owed crates back from a customer`,
   claimed: (drv, cust) => `${drv} claimed the delivery to ${cust}`,
   route_started: (drv, cust) => `${drv} started the route to ${cust}`,
@@ -10,6 +11,7 @@ const EVENT_TEXT = {
 };
 
 const EVENT_ICON = {
+  partial_delivered: "🔁",
   debt_resolved: "📥",
   claimed: "🤝",
   route_started: "🚐",

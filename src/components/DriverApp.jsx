@@ -2,6 +2,17 @@ import { useState } from "react";
 import { T, Btn, Tag, NumInput, MediaCapture, SignaturePad, fmtQty } from "./ui";
 import { uploadPhoto } from "../supabase";
 
+const sizesLine = (d) => {
+  const parts = [
+    ["Big large", d.big_large_assigned],
+    ["Small large", d.small_large_assigned],
+    ["Medium", d.medium_assigned],
+    ["Pullet", d.pullet_assigned],
+    ["Extra", d.extra_assigned],
+  ].filter(([, v]) => v > 0);
+  return parts.length ? parts.map(([l, v]) => `${l}: ${v}`).join(" · ") : null;
+};
+
 const STATUS_LABEL = {
   pending: "Not started",
   in_transit: "On the way",
@@ -18,6 +29,7 @@ export default function DriverApp({
   openDebts,
   claimDelivery,
   updateStatus,
+  submitPartialDelivery,
   markDelivered,
   submitCrateReturn,
   resolveMissingCrates,
@@ -33,10 +45,18 @@ export default function DriverApp({
   const [missingCrates, setMissingCrates] = useState("");
   const [signatureUrl, setSignatureUrl] = useState(null);
   const [signatureSkipped, setSignatureSkipped] = useState(false);
+  const [sizeBigLarge, setSizeBigLarge] = useState("");
+  const [sizeSmallLarge, setSizeSmallLarge] = useState("");
+  const [sizeMedium, setSizeMedium] = useState("");
+  const [sizePullet, setSizePullet] = useState("");
+  const [sizeExtra, setSizeExtra] = useState("");
+  const [payment, setPayment] = useState("");
+  const [receiptPhoto, setReceiptPhoto] = useState(null);
   const [retCount, setRetCount] = useState("");
   const [retPhotos, setRetPhotos] = useState([]);
   const [retVideo, setRetVideo] = useState(null);
   const [busy, setBusy] = useState(false);
+
 
   if (!driverId) {
     return (
@@ -97,6 +117,7 @@ export default function DriverApp({
           <div style={{ fontSize: 13, color: T.mute, marginBottom: 12 }}>{c && c.area}</div>
           <div style={{ background: T.tan, borderRadius: 8, padding: "10px 12px", fontSize: 14, fontWeight: 700, marginBottom: 18 }}>
             {fmtQty(claiming.crates_assigned, claiming.eggs_assigned)}
+            {sizesLine(claiming) && <div style={{ fontSize: 12, fontWeight: 600, color: T.mute, marginTop: 4 }}>{sizesLine(claiming)}</div>}
           </div>
 
           <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
@@ -198,6 +219,7 @@ export default function DriverApp({
             }}
           >
             Assigned: {fmtQty(stop.crates_assigned, stop.eggs_assigned)}
+            {sizesLine(stop) && <div style={{ fontSize: 12, fontWeight: 600, color: T.mute, marginTop: 4 }}>{sizesLine(stop)}</div>}
           </div>
 
           {stop.status === "pending" && (
@@ -228,99 +250,180 @@ export default function DriverApp({
             </Btn>
           )}
 
-          {stop.status === "arrived" && (
-            <>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>What was actually delivered?</div>
-              <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
-                <NumInput label="Crates delivered" value={dc} onChange={setDc} width={120} />
-              </div>
-              <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
-                <NumInput label="Missing crates" value={missingCrates} onChange={setMissingCrates} width={120} />
-                <NumInput label="Missing / broken eggs" value={missingEggs} onChange={setMissingEggs} width={140} />
-              </div>
+          {stop.status === "arrived" && (() => {
+            const alreadyDelivered = stop.crates_delivered || 0;
+            const thisVisit = dc === "" ? 0 : Number(dc);
+            const projectedTotal = alreadyDelivered + thisVisit;
+            const isFinalVisit = projectedTotal >= stop.crates_assigned && thisVisit > 0;
 
-              <div style={{ marginBottom: 18 }}>
-                <MediaCapture
-                  photos={stopPhotos}
-                  onAddPhoto={(url) => setStopPhotos((p) => [...p, url])}
-                  onRemovePhoto={(i) => setStopPhotos((p) => p.filter((_, idx) => idx !== i))}
-                  video={stopVideo}
-                  onSetVideo={setStopVideo}
-                  onRemoveVideo={() => setStopVideo(null)}
-                  upload={uploadPhoto}
-                  maxPhotos={5}
-                  label="Photos at this stop (at least 1 required)"
-                />
-              </div>
+            return (
+              <>
+                {alreadyDelivered > 0 && (
+                  <div style={{ background: T.tan, borderRadius: 8, padding: "8px 12px", fontSize: 13, fontWeight: 700, marginBottom: 12 }}>
+                    Already dropped off: {alreadyDelivered} of {stop.crates_assigned} crates
+                  </div>
+                )}
 
-              <div style={{ marginBottom: 18 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Customer signature</div>
-                {signatureSkipped ? (
-                  <div style={{ fontSize: 13, color: T.mute, fontWeight: 600 }}>
-                    Skipped — customer not available.{" "}
-                    <button
-                      onClick={() => setSignatureSkipped(false)}
-                      style={{ background: "none", border: "none", color: T.ink, fontWeight: 700, textDecoration: "underline", cursor: "pointer", fontFamily: "inherit", padding: 0 }}
-                    >
-                      Undo
-                    </button>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+                  {alreadyDelivered > 0 ? "How many crates this trip?" : "How many crates delivered?"}
+                </div>
+                <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+                  <NumInput label="Crates this trip" value={dc} onChange={setDc} width={120} />
+                </div>
+
+                <div style={{ marginBottom: 18 }}>
+                  <MediaCapture
+                    photos={stopPhotos}
+                    onAddPhoto={(url) => setStopPhotos((p) => [...p, url])}
+                    onRemovePhoto={(i) => setStopPhotos((p) => p.filter((_, idx) => idx !== i))}
+                    video={stopVideo}
+                    onSetVideo={setStopVideo}
+                    onRemoveVideo={() => setStopVideo(null)}
+                    upload={uploadPhoto}
+                    maxPhotos={5}
+                    label="Photos at this stop (at least 1 required)"
+                  />
+                </div>
+
+                {!isFinalVisit && thisVisit > 0 && (
+                  <div style={{ fontSize: 12, color: T.mute, marginBottom: 12 }}>
+                    That leaves {stop.crates_assigned - projectedTotal} crates still to bring — this will be saved as a partial drop-off. No signature needed yet.
                   </div>
-                ) : signatureUrl ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <img src={signatureUrl} alt="customer signature" style={{ width: 110, height: 46, objectFit: "contain", background: "#fff", border: `1.5px solid ${T.line}`, borderRadius: 6 }} />
-                    <Btn kind="ghost" small onClick={() => setSignatureUrl(null)}>
-                      Redo
-                    </Btn>
-                  </div>
-                ) : (
+                )}
+
+                {isFinalVisit && (
                   <>
-                    <SignaturePad upload={uploadPhoto} onCapture={setSignatureUrl} />
-                    <button
-                      onClick={() => setSignatureSkipped(true)}
-                      style={{ marginTop: 8, background: "none", border: "none", color: T.mute, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}
-                    >
-                      Customer not available to sign
-                    </button>
+                    <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+                      <NumInput label="Missing crates" value={missingCrates} onChange={setMissingCrates} width={120} />
+                      <NumInput label="Missing / broken eggs" value={missingEggs} onChange={setMissingEggs} width={140} />
+                    </div>
+
+                    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Egg size breakdown delivered (optional)</div>
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+                      <NumInput label="Big large" value={sizeBigLarge} onChange={setSizeBigLarge} width={85} />
+                      <NumInput label="Small large" value={sizeSmallLarge} onChange={setSizeSmallLarge} width={85} />
+                      <NumInput label="Medium" value={sizeMedium} onChange={setSizeMedium} width={85} />
+                      <NumInput label="Pullet" value={sizePullet} onChange={setSizePullet} width={85} />
+                      <NumInput label="Extra" value={sizeExtra} onChange={setSizeExtra} width={85} />
+                    </div>
+
+                    <div style={{ marginBottom: 16 }}>
+                      <NumInput label="Payment collected (₦)" value={payment} onChange={setPayment} width={160} />
+                    </div>
+
+                    <div style={{ marginBottom: 18 }}>
+                      <MediaCapture
+                        photos={receiptPhoto ? [receiptPhoto] : []}
+                        onAddPhoto={(url) => setReceiptPhoto(url)}
+                        onRemovePhoto={() => setReceiptPhoto(null)}
+                        video={null}
+                        onSetVideo={() => {}}
+                        onRemoveVideo={() => {}}
+                        upload={uploadPhoto}
+                        maxPhotos={1}
+                        label="Receipt photo (required)"
+                      />
+                    </div>
+
+                    <div style={{ marginBottom: 18 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Customer signature</div>
+                      {signatureSkipped ? (
+                        <div style={{ fontSize: 13, color: T.mute, fontWeight: 600 }}>
+                          Skipped — customer not available.{" "}
+                          <button
+                            onClick={() => setSignatureSkipped(false)}
+                            style={{ background: "none", border: "none", color: T.ink, fontWeight: 700, textDecoration: "underline", cursor: "pointer", fontFamily: "inherit", padding: 0 }}
+                          >
+                            Undo
+                          </button>
+                        </div>
+                      ) : signatureUrl ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <img src={signatureUrl} alt="customer signature" style={{ width: 110, height: 46, objectFit: "contain", background: "#fff", border: `1.5px solid ${T.line}`, borderRadius: 6 }} />
+                          <Btn kind="ghost" small onClick={() => setSignatureUrl(null)}>
+                            Redo
+                          </Btn>
+                        </div>
+                      ) : (
+                        <>
+                          <SignaturePad upload={uploadPhoto} onCapture={setSignatureUrl} />
+                          <button
+                            onClick={() => setSignatureSkipped(true)}
+                            style={{ marginTop: 8, background: "none", border: "none", color: T.mute, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}
+                          >
+                            Customer not available to sign
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </>
                 )}
-              </div>
 
-              <Btn
-                full
-                kind="green"
-                disabled={stopPhotos.length === 0 || (!signatureUrl && !signatureSkipped) || busy}
-                onClick={async () => {
-                  setBusy(true);
-                  await markDelivered(
-                    stop.id,
-                    dc === "" ? stop.crates_assigned : dc,
-                    stopPhotos,
-                    stopVideo,
-                    missingEggs === "" ? 0 : missingEggs,
-                    missingCrates === "" ? 0 : missingCrates,
-                    signatureUrl,
-                    { driver_id: driverId, customer_id: stop.customer_id }
-                  );
-                  setBusy(false);
-                  setOpenStop(null);
-                  setDc("");
-                  setStopPhotos([]);
-                  setStopVideo(null);
-                  setMissingEggs("");
-                  setMissingCrates("");
-                  setSignatureUrl(null);
-                  setSignatureSkipped(false);
-                }}
-              >
-                {busy ? "Saving…" : "✓ Mark delivered"}
-              </Btn>
-              {(stopPhotos.length === 0 || (!signatureUrl && !signatureSkipped)) && (
-                <div style={{ fontSize: 12, color: T.mute, textAlign: "center", marginTop: 8 }}>
-                  {stopPhotos.length === 0 ? "Take at least one photo" : "Get a signature (or mark customer unavailable)"} to finish this stop
-                </div>
-              )}
-            </>
-          )}
+                <Btn
+                  full
+                  kind="green"
+                  disabled={
+                    busy ||
+                    thisVisit <= 0 ||
+                    stopPhotos.length === 0 ||
+                    (isFinalVisit && (!receiptPhoto || (!signatureUrl && !signatureSkipped)))
+                  }
+                  onClick={async () => {
+                    setBusy(true);
+                    if (isFinalVisit) {
+                      await markDelivered(
+                        stop.id,
+                        thisVisit,
+                        stopPhotos,
+                        stopVideo,
+                        missingEggs === "" ? 0 : missingEggs,
+                        missingCrates === "" ? 0 : missingCrates,
+                        signatureUrl,
+                        {
+                          bigLarge: sizeBigLarge === "" ? 0 : sizeBigLarge,
+                          smallLarge: sizeSmallLarge === "" ? 0 : sizeSmallLarge,
+                          medium: sizeMedium === "" ? 0 : sizeMedium,
+                          pullet: sizePullet === "" ? 0 : sizePullet,
+                          extra: sizeExtra === "" ? 0 : sizeExtra,
+                        },
+                        payment === "" ? 0 : payment,
+                        receiptPhoto,
+                        { driver_id: driverId, customer_id: stop.customer_id }
+                      );
+                    } else {
+                      await submitPartialDelivery(stop.id, thisVisit, stopPhotos, {
+                        driver_id: driverId,
+                        customer_id: stop.customer_id,
+                      });
+                    }
+                    setBusy(false);
+                    setOpenStop(null);
+                    setDc("");
+                    setStopPhotos([]);
+                    setStopVideo(null);
+                    setMissingEggs("");
+                    setMissingCrates("");
+                    setSignatureUrl(null);
+                    setSignatureSkipped(false);
+                    setSizeBigLarge("");
+                    setSizeSmallLarge("");
+                    setSizeMedium("");
+                    setSizePullet("");
+                    setSizeExtra("");
+                    setPayment("");
+                    setReceiptPhoto(null);
+                  }}
+                >
+                  {busy ? "Saving…" : isFinalVisit ? "✓ Mark delivered" : "Save partial delivery"}
+                </Btn>
+                {thisVisit <= 0 && (
+                  <div style={{ fontSize: 12, color: T.mute, textAlign: "center", marginTop: 8 }}>
+                    Enter how many crates you're dropping off this trip
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
       </div>
     );
@@ -404,7 +507,7 @@ export default function DriverApp({
                 onClick={() => {
                   if (!isDone) {
                     setOpenStop(d.id);
-                    setDc(d.crates_assigned);
+                    setDc("");
                     setStopPhotos([]);
                     setStopVideo(null);
                   }
