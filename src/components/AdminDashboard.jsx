@@ -207,15 +207,24 @@ export default function AdminDashboard({ drivers, customers, helpers, deliveries
                           </div>
                         )}
 
-                        {(d.missing_crates > 0 || d.missing_eggs > 0) && (
+                        {(d.missing_crates > 0 || d.missing_eggs > 0 || (d.missing_crates_photos && d.missing_crates_photos.length > 0)) && (
                           <div style={{ marginBottom: 14 }}>
                             <div style={{ fontSize: 11, color: T.mute, fontWeight: 700, marginBottom: 4 }}>MISSING / CRACKED</div>
                             <div style={{ fontSize: 13, fontWeight: 700, color: d.missing_crates_resolved ? T.green : T.red }}>
-                              {d.missing_crates || 0} crates missing · {d.missing_eggs || 0} eggs cracked
-                              {d.missing_crates > 0 && d.missing_crates_resolved && (
+                              {d.missing_crates || 0} crates still missing · {d.missing_eggs || 0} eggs cracked
+                              {d.missing_crates_resolved && (
                                 <div style={{ fontWeight: 600, marginTop: 2 }}>✓ Crates collected back {fmtDateTime(d.missing_crates_resolved_at)}</div>
                               )}
                             </div>
+                            {d.missing_crates_photos && d.missing_crates_photos.length > 0 && (
+                              <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                                {d.missing_crates_photos.map((p, i) => (
+                                  <a key={i} href={p} target="_blank" rel="noreferrer">
+                                    <img src={p} alt={`crate collection ${i + 1}`} style={{ width: 54, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }} />
+                                  </a>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         )}
 

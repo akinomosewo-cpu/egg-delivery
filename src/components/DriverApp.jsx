@@ -33,6 +33,7 @@ export default function DriverApp({
   markDelivered,
   submitCrateReturn,
   resolveMissingCrates,
+  collectMissingCrates,
 }) {
   const [driverId, setDriverId] = useState(null);
   const [claimingId, setClaimingId] = useState(null);
@@ -51,6 +52,9 @@ export default function DriverApp({
   const [retPhotos, setRetPhotos] = useState([]);
   const [retVideo, setRetVideo] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [collectingDebtId, setCollectingDebtId] = useState(null);
+  const [collectAmount, setCollectAmount] = useState("");
+  const [collectPhoto, setCollectPhoto] = useState(null);
 
 
   if (!driverId) {
@@ -604,6 +608,7 @@ export default function DriverApp({
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {myDebts.map((debt) => {
                 const c = customers.find((x) => x.id === debt.customer_id);
+                const isCollecting = collectingDebtId === debt.id;
                 return (
                 <div key={debt.id} style={{ background: "#FBEAE6", border: `1.5px solid ${T.red}`, borderRadius: 12, padding: 14 }}>
                   <div style={{ fontWeight: 800, fontSize: 14 }}>{c ? c.name : "…"}</div>
@@ -611,9 +616,70 @@ export default function DriverApp({
                     Owes {debt.missing_crates} crate{debt.missing_crates !== 1 ? "s" : ""}
                     {c && c.area ? ` · ${c.area}` : ""}
                   </div>
-                  <Btn small full kind="green" onClick={() => resolveMissingCrates(debt.id, driverId)}>
-                    Collected the crates
-                  </Btn>
+
+                  {!isCollecting ? (
+                    <Btn
+                      small
+                      full
+                      kind="green"
+                      onClick={() => {
+                        setCollectingDebtId(debt.id);
+                        setCollectAmount("");
+                        setCollectPhoto(null);
+                      }}
+                    >
+                      Collected the crates
+                    </Btn>
+                  ) : (
+                    <div style={{ background: "#fff", borderRadius: 10, padding: 12, border: `1.5px solid ${T.line}` }}>
+                      <div style={{ marginBottom: 10 }}>
+                        <NumInput
+                          label={`How many crates? (max ${debt.missing_crates})`}
+                          value={collectAmount}
+                          onChange={(v) => {
+                            if (v === "") return setCollectAmount("");
+                            const n = Number(v);
+                            setCollectAmount(n > debt.missing_crates ? String(debt.missing_crates) : v);
+                          }}
+                          width={120}
+                        />
+                      </div>
+                      <div style={{ marginBottom: 12 }}>
+                        <MediaCapture
+                          photos={collectPhoto ? [collectPhoto] : []}
+                          onAddPhoto={(url) => setCollectPhoto(url)}
+                          onRemovePhoto={() => setCollectPhoto(null)}
+                          video={null}
+                          onSetVideo={() => {}}
+                          onRemoveVideo={() => {}}
+                          upload={uploadPhoto}
+                          maxPhotos={1}
+                          label="Photo of the crates (required)"
+                        />
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <Btn kind="ghost" small onClick={() => setCollectingDebtId(null)}>
+                          Cancel
+                        </Btn>
+                        <Btn
+                          small
+                          kind="green"
+                          full
+                          disabled={busy || collectAmount === "" || Number(collectAmount) <= 0 || !collectPhoto}
+                          onClick={async () => {
+                            setBusy(true);
+                            await collectMissingCrates(debt.id, driverId, Number(collectAmount), collectPhoto);
+                            setBusy(false);
+                            setCollectingDebtId(null);
+                            setCollectAmount("");
+                            setCollectPhoto(null);
+                          }}
+                        >
+                          {busy ? "Saving…" : "Confirm collected"}
+                        </Btn>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
