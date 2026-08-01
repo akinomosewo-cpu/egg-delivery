@@ -71,7 +71,7 @@ export const Tag = ({ children, color, bg }) => (
   </span>
 );
 
-export const NumInput = ({ label, value, onChange, width = 90, decimal = false }) => (
+export const NumInput = ({ label, value, onChange, width = 90, decimal = false, fractions = false }) => (
   <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: T.mute, fontWeight: 600 }}>
     {label}
     <input
@@ -100,6 +100,38 @@ export const NumInput = ({ label, value, onChange, width = 90, decimal = false }
         fontFamily: "inherit",
       }}
     />
+    {fractions && (
+      <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
+        {[
+          ["½", 0.5],
+          ["¼", 0.25],
+          ["¾", 0.75],
+        ].map(([label2, frac]) => (
+          <button
+            key={label2}
+            type="button"
+            onClick={() => {
+              const whole = Math.floor(Number(value) || 0);
+              onChange(String(whole + frac));
+            }}
+            style={{
+              flex: 1,
+              padding: "5px 0",
+              fontSize: 13,
+              fontWeight: 700,
+              color: T.ink,
+              background: T.tan,
+              border: `1px solid ${T.line}`,
+              borderRadius: 6,
+              cursor: "pointer",
+              fontFamily: "inherit",
+            }}
+          >
+            {label2}
+          </button>
+        ))}
+      </div>
+    )}
   </label>
 );
 

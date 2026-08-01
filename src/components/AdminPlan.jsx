@@ -167,7 +167,7 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
             <NumInput label="Small large" value={smallLarge} onChange={setSmallLarge} width={90} />
             <NumInput label="Medium" value={medium} onChange={setMedium} width={90} />
             <NumInput label="Pullet" value={pullet} onChange={setPullet} width={90} />
-            <NumInput label="Extra" value={extra} onChange={setExtra} width={90} decimal />
+            <NumInput label="Extra" value={extra} onChange={setExtra} width={90} decimal fractions />
           </div>
         </div>
 
