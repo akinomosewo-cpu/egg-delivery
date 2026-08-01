@@ -78,6 +78,16 @@ export default function App() {
     return () => supabase.removeChannel(channel);
   }, [loadAll]);
 
+  // Backup for realtime: silently re-fetch every 5 seconds in case a realtime
+  // event gets missed (weak signal, brief disconnect, etc). No spinner, no
+  // page reload — just quietly keeps the data current in the background.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadAll();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [loadAll]);
+
   // Ask for notification permission once the admin unlocks the dashboard
   useEffect(() => {
     if (adminUnlocked) requestNotificationPermission();
