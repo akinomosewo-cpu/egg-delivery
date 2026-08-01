@@ -160,11 +160,17 @@ export default function AdminDashboard({ drivers, customers, helpers, deliveries
                     )}
                     {d.status === "delivered" && (d.missing_crates > 0 || d.missing_eggs > 0) && (
                       <div style={{ marginTop: 4 }}>
-                        <Tag color={T.red} bg="#FBEAE6">
-                          ⚠ Missing: {d.missing_crates > 0 ? `${d.missing_crates} crate${d.missing_crates !== 1 ? "s" : ""}` : ""}
-                          {d.missing_crates > 0 && d.missing_eggs > 0 ? " + " : ""}
-                          {d.missing_eggs > 0 ? `${d.missing_eggs} cracked egg${d.missing_eggs !== 1 ? "s" : ""}` : ""}
-                        </Tag>
+                        {d.missing_crates > 0 && d.missing_crates_resolved ? (
+                          <Tag color={T.green} bg={T.greenBg}>
+                            ✓ Crates collected back
+                          </Tag>
+                        ) : (
+                          <Tag color={T.red} bg="#FBEAE6">
+                            ⚠ Missing: {d.missing_crates > 0 ? `${d.missing_crates} crate${d.missing_crates !== 1 ? "s" : ""}` : ""}
+                            {d.missing_crates > 0 && d.missing_eggs > 0 ? " + " : ""}
+                            {d.missing_eggs > 0 ? `${d.missing_eggs} cracked egg${d.missing_eggs !== 1 ? "s" : ""}` : ""}
+                          </Tag>
+                        )}
                       </div>
                     )}
                     {d.status === "delivered" && (
@@ -204,8 +210,11 @@ export default function AdminDashboard({ drivers, customers, helpers, deliveries
                         {(d.missing_crates > 0 || d.missing_eggs > 0) && (
                           <div style={{ marginBottom: 14 }}>
                             <div style={{ fontSize: 11, color: T.mute, fontWeight: 700, marginBottom: 4 }}>MISSING / CRACKED</div>
-                            <div style={{ fontSize: 13, fontWeight: 700, color: T.red }}>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: d.missing_crates_resolved ? T.green : T.red }}>
                               {d.missing_crates || 0} crates missing · {d.missing_eggs || 0} eggs cracked
+                              {d.missing_crates > 0 && d.missing_crates_resolved && (
+                                <div style={{ fontWeight: 600, marginTop: 2 }}>✓ Crates collected back {fmtDateTime(d.missing_crates_resolved_at)}</div>
+                              )}
                             </div>
                           </div>
                         )}

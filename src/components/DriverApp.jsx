@@ -45,11 +45,6 @@ export default function DriverApp({
   const [missingCrates, setMissingCrates] = useState("");
   const [signatureUrl, setSignatureUrl] = useState(null);
   const [signatureSkipped, setSignatureSkipped] = useState(false);
-  const [sizeBigLarge, setSizeBigLarge] = useState("");
-  const [sizeSmallLarge, setSizeSmallLarge] = useState("");
-  const [sizeMedium, setSizeMedium] = useState("");
-  const [sizePullet, setSizePullet] = useState("");
-  const [sizeExtra, setSizeExtra] = useState("");
   const [payment, setPayment] = useState("");
   const [receiptPhoto, setReceiptPhoto] = useState(null);
   const [retCount, setRetCount] = useState("");
@@ -254,6 +249,7 @@ export default function DriverApp({
 
           {stop.status === "arrived" && (() => {
             const alreadyDelivered = stop.crates_delivered || 0;
+            const remaining = Math.max(0, stop.crates_assigned - alreadyDelivered);
             const thisVisit = dc === "" ? 0 : Number(dc);
             const projectedTotal = alreadyDelivered + thisVisit;
             const isFinalVisit = projectedTotal >= stop.crates_assigned && thisVisit > 0;
@@ -268,9 +264,19 @@ export default function DriverApp({
 
                 <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
                   {alreadyDelivered > 0 ? "How many crates this trip?" : "How many crates delivered?"}
+                  <span style={{ color: T.mute, fontWeight: 600 }}> (max {remaining})</span>
                 </div>
                 <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
-                  <NumInput label="Crates this trip" value={dc} onChange={setDc} width={120} />
+                  <NumInput
+                    label="Crates this trip"
+                    value={dc}
+                    onChange={(v) => {
+                      if (v === "") return setDc("");
+                      const n = Number(v);
+                      setDc(n > remaining ? String(remaining) : v);
+                    }}
+                    width={120}
+                  />
                 </div>
 
                 <div style={{ marginBottom: 18 }}>
@@ -298,15 +304,6 @@ export default function DriverApp({
                     <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
                       <NumInput label="Missing crates" value={missingCrates} onChange={setMissingCrates} width={120} />
                       <NumInput label="Cracked eggs" value={missingEggs} onChange={setMissingEggs} width={140} />
-                    </div>
-
-                    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Egg size breakdown delivered (optional)</div>
-                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
-                      <NumInput label="Big large" value={sizeBigLarge} onChange={setSizeBigLarge} width={85} />
-                      <NumInput label="Small large" value={sizeSmallLarge} onChange={setSizeSmallLarge} width={85} />
-                      <NumInput label="Medium" value={sizeMedium} onChange={setSizeMedium} width={85} />
-                      <NumInput label="Pullet" value={sizePullet} onChange={setSizePullet} width={85} />
-                      <NumInput label="Extra" value={sizeExtra} onChange={setSizeExtra} width={85} />
                     </div>
 
                     <div style={{ marginBottom: 16 }}>
@@ -382,11 +379,11 @@ export default function DriverApp({
                         missingCrates === "" ? 0 : Number(missingCrates),
                         signatureUrl,
                         {
-                          bigLarge: sizeBigLarge === "" ? 0 : Number(sizeBigLarge),
-                          smallLarge: sizeSmallLarge === "" ? 0 : Number(sizeSmallLarge),
-                          medium: sizeMedium === "" ? 0 : Number(sizeMedium),
-                          pullet: sizePullet === "" ? 0 : Number(sizePullet),
-                          extra: sizeExtra === "" ? 0 : Number(sizeExtra),
+                          bigLarge: 0,
+                          smallLarge: 0,
+                          medium: 0,
+                          pullet: 0,
+                          extra: 0,
                         },
                         payment === "" ? 0 : Number(payment),
                         receiptPhoto,
@@ -407,11 +404,6 @@ export default function DriverApp({
                     setMissingCrates("");
                     setSignatureUrl(null);
                     setSignatureSkipped(false);
-                    setSizeBigLarge("");
-                    setSizeSmallLarge("");
-                    setSizeMedium("");
-                    setSizePullet("");
-                    setSizeExtra("");
                     setPayment("");
                     setReceiptPhoto(null);
                   }}
@@ -600,16 +592,19 @@ export default function DriverApp({
         )}
       </div>
 
-      {/* Missing crates owed by customers — visible to all drivers */}
-      {openDebts.length > 0 && (
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 800, color: T.mute, marginBottom: 8 }}>
-            Crates still owed by customers ({openDebts.length})
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {openDebts.map((debt) => {
-              const c = customers.find((x) => x.id === debt.customer_id);
-              return (
+      {/* Missing crates owed by customers — only from this driver's own deliveries */}
+      {(() => {
+        const myDebts = openDebts.filter((debt) => debt.driver_id === driverId);
+        if (myDebts.length === 0) return null;
+        return (
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: T.mute, marginBottom: 8 }}>
+              Crates still owed by customers ({myDebts.length})
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {myDebts.map((debt) => {
+                const c = customers.find((x) => x.id === debt.customer_id);
+                return (
                 <div key={debt.id} style={{ background: "#FBEAE6", border: `1.5px solid ${T.red}`, borderRadius: 12, padding: 14 }}>
                   <div style={{ fontWeight: 800, fontSize: 14 }}>{c ? c.name : "…"}</div>
                   <div style={{ fontSize: 12, color: T.mute, marginBottom: 10 }}>
@@ -624,7 +619,8 @@ export default function DriverApp({
             })}
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
