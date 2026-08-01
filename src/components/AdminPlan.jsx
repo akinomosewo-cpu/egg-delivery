@@ -22,9 +22,8 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
   const chosen = customers.find((c) => c.id === customerId);
   const totalCrates = deliveries.reduce((s, d) => s + d.crates_assigned, 0);
 
-  // Crates are auto-calculated from the size breakdown (30 eggs per crate), Extra excluded
-  const eggTotal = (Number(bigLarge) || 0) + (Number(smallLarge) || 0) + (Number(medium) || 0) + (Number(pullet) || 0);
-  const crates = eggTotal > 0 ? Math.ceil(eggTotal / 30) : 0;
+  // Crates are auto-calculated: sum of the size categories in crates (Extra excluded)
+  const crates = (Number(bigLarge) || 0) + (Number(smallLarge) || 0) + (Number(medium) || 0) + (Number(pullet) || 0);
 
   const submit = async () => {
     if (!chosen || crates === 0) return;
@@ -158,7 +157,7 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
 
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 8 }}>
-            Egg size breakdown — Crates fills in automatically (30 eggs per crate, Extra not counted)
+            Crate breakdown by size — total fills in automatically (Extra not counted)
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <NumInput label="Big large" value={bigLarge} onChange={setBigLarge} width={90} />
