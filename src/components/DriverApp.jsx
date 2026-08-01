@@ -118,6 +118,7 @@ export default function DriverApp({
           <div style={{ background: T.tan, borderRadius: 8, padding: "10px 12px", fontSize: 14, fontWeight: 700, marginBottom: 18 }}>
             {fmtQty(claiming.crates_assigned, claiming.eggs_assigned)}
             {sizesLine(claiming) && <div style={{ fontSize: 12, fontWeight: 600, color: T.mute, marginTop: 4 }}>{sizesLine(claiming)}</div>}
+            {claiming.price_due > 0 && <div style={{ fontSize: 13, fontWeight: 800, color: T.ink, marginTop: 6 }}>Price: ₦{Number(claiming.price_due).toLocaleString("en-NG")}</div>}
           </div>
 
           <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
@@ -220,6 +221,7 @@ export default function DriverApp({
           >
             Assigned: {fmtQty(stop.crates_assigned, stop.eggs_assigned)}
             {sizesLine(stop) && <div style={{ fontSize: 12, fontWeight: 600, color: T.mute, marginTop: 4 }}>{sizesLine(stop)}</div>}
+            {stop.price_due > 0 && <div style={{ fontSize: 13, fontWeight: 800, color: T.ink, marginTop: 6 }}>Price: ₦{Number(stop.price_due).toLocaleString("en-NG")}</div>}
           </div>
 
           {stop.status === "pending" && (
@@ -295,7 +297,7 @@ export default function DriverApp({
                   <>
                     <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
                       <NumInput label="Missing crates" value={missingCrates} onChange={setMissingCrates} width={120} />
-                      <NumInput label="Missing / broken eggs" value={missingEggs} onChange={setMissingEggs} width={140} />
+                      <NumInput label="Cracked eggs" value={missingEggs} onChange={setMissingEggs} width={140} />
                     </div>
 
                     <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Egg size breakdown delivered (optional)</div>
@@ -308,7 +310,7 @@ export default function DriverApp({
                     </div>
 
                     <div style={{ marginBottom: 16 }}>
-                      <NumInput label="Payment collected (₦)" value={payment} onChange={setPayment} width={160} />
+                      <NumInput label="Payment collected (₦)" value={payment} onChange={setPayment} width={160} decimal />
                     </div>
 
                     <div style={{ marginBottom: 18 }}>

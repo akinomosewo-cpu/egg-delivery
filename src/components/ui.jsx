@@ -71,15 +71,27 @@ export const Tag = ({ children, color, bg }) => (
   </span>
 );
 
-export const NumInput = ({ label, value, onChange, width = 90 }) => (
+export const NumInput = ({ label, value, onChange, width = 90, decimal = false }) => (
   <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: T.mute, fontWeight: 600 }}>
     {label}
     <input
       type="number"
       min="0"
-      inputMode="numeric"
+      step={decimal ? "0.01" : "1"}
+      inputMode={decimal ? "decimal" : "numeric"}
       value={value}
-      onChange={(e) => onChange(e.target.value === "" ? "" : Math.max(0, parseInt(e.target.value) || 0))}
+      onChange={(e) => {
+        const raw = e.target.value;
+        if (raw === "") return onChange("");
+        if (decimal) {
+          // allow natural typing of decimals (e.g. "5." while mid-type) —
+          // validate shape, but don't force-parse until the value is used
+          if (/^\d*\.?\d*$/.test(raw)) onChange(raw);
+          return;
+        }
+        const n = parseInt(raw);
+        onChange(Number.isNaN(n) ? "" : Math.max(0, n));
+      }}
       style={{
         width,
         padding: "10px 10px",

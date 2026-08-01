@@ -9,6 +9,7 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
   const [medium, setMedium] = useState("");
   const [pullet, setPullet] = useState("");
   const [extra, setExtra] = useState("");
+  const [price, setPrice] = useState("");
   const [saving, setSaving] = useState(false);
 
   const matches = search
@@ -37,10 +38,12 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
       medium_assigned: medium || 0,
       pullet_assigned: pullet || 0,
       extra_assigned: extra || 0,
+      price_due: price || 0,
     });
     setSaving(false);
     setSearch("");
     setCustomerId(null);
+    setPrice("");
     setBigLarge("");
     setSmallLarge("");
     setMedium("");
@@ -164,7 +167,7 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
             <NumInput label="Small large" value={smallLarge} onChange={setSmallLarge} width={90} />
             <NumInput label="Medium" value={medium} onChange={setMedium} width={90} />
             <NumInput label="Pullet" value={pullet} onChange={setPullet} width={90} />
-            <NumInput label="Extra" value={extra} onChange={setExtra} width={90} />
+            <NumInput label="Extra" value={extra} onChange={setExtra} width={90} decimal />
           </div>
         </div>
 
@@ -184,6 +187,10 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
           >
             {crates}
           </div>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <NumInput label="Price customer pays (₦)" value={price} onChange={setPrice} width={160} decimal />
         </div>
 
         <Btn full onClick={submit} disabled={saving || !chosen || crates === 0}>

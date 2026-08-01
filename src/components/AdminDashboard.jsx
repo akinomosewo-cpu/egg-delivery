@@ -163,7 +163,7 @@ export default function AdminDashboard({ drivers, customers, helpers, deliveries
                         <Tag color={T.red} bg="#FBEAE6">
                           ⚠ Missing: {d.missing_crates > 0 ? `${d.missing_crates} crate${d.missing_crates !== 1 ? "s" : ""}` : ""}
                           {d.missing_crates > 0 && d.missing_eggs > 0 ? " + " : ""}
-                          {d.missing_eggs > 0 ? `${d.missing_eggs} egg${d.missing_eggs !== 1 ? "s" : ""}` : ""}
+                          {d.missing_eggs > 0 ? `${d.missing_eggs} cracked egg${d.missing_eggs !== 1 ? "s" : ""}` : ""}
                         </Tag>
                       </div>
                     )}
@@ -177,8 +177,14 @@ export default function AdminDashboard({ drivers, customers, helpers, deliveries
                       <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 10, padding: 14 }}>
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
                           <div>
+                            <div style={{ fontSize: 11, color: T.mute, fontWeight: 700 }}>PRICE DUE</div>
+                            <div style={{ fontSize: 16, fontWeight: 900 }}>{money(d.price_due)}</div>
+                          </div>
+                          <div>
                             <div style={{ fontSize: 11, color: T.mute, fontWeight: 700 }}>PAYMENT COLLECTED</div>
-                            <div style={{ fontSize: 16, fontWeight: 900 }}>{money(d.payment_collected)}</div>
+                            <div style={{ fontSize: 16, fontWeight: 900, color: Number(d.payment_collected) < Number(d.price_due) ? T.red : T.green }}>
+                              {money(d.payment_collected)}
+                            </div>
                           </div>
                           <div>
                             <div style={{ fontSize: 11, color: T.mute, fontWeight: 700 }}>DELIVERED</div>
@@ -197,9 +203,9 @@ export default function AdminDashboard({ drivers, customers, helpers, deliveries
 
                         {(d.missing_crates > 0 || d.missing_eggs > 0) && (
                           <div style={{ marginBottom: 14 }}>
-                            <div style={{ fontSize: 11, color: T.mute, fontWeight: 700, marginBottom: 4 }}>MISSING / BROKEN</div>
+                            <div style={{ fontSize: 11, color: T.mute, fontWeight: 700, marginBottom: 4 }}>MISSING / CRACKED</div>
                             <div style={{ fontSize: 13, fontWeight: 700, color: T.red }}>
-                              {d.missing_crates || 0} crates · {d.missing_eggs || 0} eggs
+                              {d.missing_crates || 0} crates missing · {d.missing_eggs || 0} eggs cracked
                             </div>
                           </div>
                         )}
