@@ -75,22 +75,18 @@ export const NumInput = ({ label, value, onChange, width = 90, decimal = false }
   <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: T.mute, fontWeight: 600 }}>
     {label}
     <input
-      type="number"
-      min="0"
-      step={decimal ? "0.01" : "1"}
+      type="text"
       inputMode={decimal ? "decimal" : "numeric"}
+      pattern={decimal ? "[0-9]*[.]?[0-9]*" : "[0-9]*"}
       value={value}
       onChange={(e) => {
         const raw = e.target.value;
         if (raw === "") return onChange("");
-        if (decimal) {
-          // allow natural typing of decimals (e.g. "5." while mid-type) —
-          // validate shape, but don't force-parse until the value is used
-          if (/^\d*\.?\d*$/.test(raw)) onChange(raw);
-          return;
-        }
-        const n = parseInt(raw);
-        onChange(Number.isNaN(n) ? "" : Math.max(0, n));
+        // Filter to only what's valid — keeps the raw string while typing
+        // (e.g. a trailing "5." mid-type) instead of parsing on every keystroke,
+        // which is what was silently eating the decimal point on iPhone/Android.
+        const re = decimal ? /^\d*\.?\d*$/ : /^\d*$/;
+        if (re.test(raw)) onChange(raw);
       }}
       style={{
         width,

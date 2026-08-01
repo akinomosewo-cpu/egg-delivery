@@ -378,17 +378,17 @@ export default function DriverApp({
                         thisVisit,
                         stopPhotos,
                         stopVideo,
-                        missingEggs === "" ? 0 : missingEggs,
-                        missingCrates === "" ? 0 : missingCrates,
+                        missingEggs === "" ? 0 : Number(missingEggs),
+                        missingCrates === "" ? 0 : Number(missingCrates),
                         signatureUrl,
                         {
-                          bigLarge: sizeBigLarge === "" ? 0 : sizeBigLarge,
-                          smallLarge: sizeSmallLarge === "" ? 0 : sizeSmallLarge,
-                          medium: sizeMedium === "" ? 0 : sizeMedium,
-                          pullet: sizePullet === "" ? 0 : sizePullet,
-                          extra: sizeExtra === "" ? 0 : sizeExtra,
+                          bigLarge: sizeBigLarge === "" ? 0 : Number(sizeBigLarge),
+                          smallLarge: sizeSmallLarge === "" ? 0 : Number(sizeSmallLarge),
+                          medium: sizeMedium === "" ? 0 : Number(sizeMedium),
+                          pullet: sizePullet === "" ? 0 : Number(sizePullet),
+                          extra: sizeExtra === "" ? 0 : Number(sizeExtra),
                         },
-                        payment === "" ? 0 : payment,
+                        payment === "" ? 0 : Number(payment),
                         receiptPhoto,
                         { driver_id: driverId, customer_id: stop.customer_id }
                       );
@@ -570,7 +570,7 @@ export default function DriverApp({
               disabled={busy || retCount === "" || retPhotos.length === 0}
               onClick={async () => {
                 setBusy(true);
-                await submitCrateReturn(driverId, retCount, retPhotos, retVideo);
+                await submitCrateReturn(driverId, Number(retCount), retPhotos, retVideo);
                 setBusy(false);
                 setRetCount("");
                 setRetPhotos([]);

@@ -33,12 +33,12 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
       customer_id: chosen.id,
       crates_assigned: crates,
       eggs_assigned: 0,
-      big_large_assigned: bigLarge || 0,
-      small_large_assigned: smallLarge || 0,
-      medium_assigned: medium || 0,
-      pullet_assigned: pullet || 0,
-      extra_assigned: extra || 0,
-      price_due: price || 0,
+      big_large_assigned: Number(bigLarge) || 0,
+      small_large_assigned: Number(smallLarge) || 0,
+      medium_assigned: Number(medium) || 0,
+      pullet_assigned: Number(pullet) || 0,
+      extra_assigned: Number(extra) || 0,
+      price_due: Number(price) || 0,
     });
     setSaving(false);
     setSearch("");
