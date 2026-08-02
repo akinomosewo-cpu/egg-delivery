@@ -9,7 +9,6 @@ import AdminManage from "./components/AdminManage";
 import AdminReports from "./components/AdminReports";
 import AdminMissingCrates from "./components/AdminMissingCrates";
 import AdminDayList from "./components/AdminDayList";
-import AdminAllDeliveries from "./components/AdminAllDeliveries";
 import DriverApp from "./components/DriverApp";
 
 const ADMIN_PIN = "8791"; // change this to change the admin password
@@ -695,8 +694,6 @@ export default function App() {
                 addDelivery={addDelivery}
                 removeDelivery={removeDelivery}
               />
-            ) : adminTab === "today" ? (
-              <AdminAllDeliveries drivers={drivers} customers={customers} helpers={helpers} deliveries={deliveries} />
             ) : adminTab === "live" ? (
               <AdminDashboard
                 drivers={drivers}

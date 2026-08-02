@@ -28,6 +28,7 @@ export default function DriverApp({
   crateReturns,
   openDebts,
   claimDelivery,
+  unclaimDelivery,
   updateStatus,
   submitPartialDelivery,
   markDelivered,
@@ -498,43 +499,76 @@ export default function DriverApp({
           {myStops.map((d) => {
             const c = customers.find((x) => x.id === d.customer_id);
             const isDone = d.status === "delivered";
+            const canReturn = d.status === "pending" && (d.crates_delivered || 0) === 0;
             const helperNames = (d.helper_ids || []).map((id) => (helpers.find((h) => h.id === id) || {}).name).filter(Boolean);
             return (
-              <button
+              <div
                 key={d.id}
-                onClick={() => {
-                  if (!isDone) {
-                    setOpenStop(d.id);
-                    setDc("");
-                    setStopPhotos([]);
-                    setStopVideo(null);
-                  }
-                }}
                 style={{
-                  textAlign: "left",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: "14px 16px",
                   borderRadius: 12,
                   border: `1.5px solid ${isDone ? T.green : T.line}`,
                   background: isDone ? T.greenBg : T.card,
-                  cursor: isDone ? "default" : "pointer",
-                  fontFamily: "inherit",
-                  width: "100%",
+                  overflow: "hidden",
                 }}
               >
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: 15, color: T.ink }}>{c ? c.name : "…"}</div>
-                  <div style={{ fontSize: 13, color: T.mute }}>
-                    {c && c.area ? `${c.area} · ` : ""}
-                    {fmtQty(d.crates_assigned, d.eggs_assigned)}
-                    {!isDone && ` · ${STATUS_LABEL[d.status]}`}
-                    {helperNames.length > 0 && ` · with ${helperNames.join(", ")}`}
+                <button
+                  onClick={() => {
+                    if (!isDone) {
+                      setOpenStop(d.id);
+                      setDc("");
+                      setStopPhotos([]);
+                      setStopVideo(null);
+                    }
+                  }}
+                  style={{
+                    textAlign: "left",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    padding: "14px 16px",
+                    border: "none",
+                    background: "none",
+                    cursor: isDone ? "default" : "pointer",
+                    fontFamily: "inherit",
+                    width: "100%",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 15, color: T.ink }}>{c ? c.name : "…"}</div>
+                    <div style={{ fontSize: 13, color: T.mute }}>
+                      {c && c.area ? `${c.area} · ` : ""}
+                      {fmtQty(d.crates_assigned, d.eggs_assigned)}
+                      {!isDone && ` · ${STATUS_LABEL[d.status]}`}
+                      {helperNames.length > 0 && ` · with ${helperNames.join(", ")}`}
+                    </div>
                   </div>
-                </div>
-                <div style={{ fontSize: 22 }}>{isDone ? "✅" : d.status === "arrived" ? "📍" : d.status === "in_transit" ? "🚐" : "○"}</div>
-              </button>
+                  <div style={{ fontSize: 22 }}>{isDone ? "✅" : d.status === "arrived" ? "📍" : d.status === "in_transit" ? "🚐" : "○"}</div>
+                </button>
+                {canReturn && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (window.confirm(`Return this delivery to ${c ? c.name : "the customer"} back to the pool? Any other driver can claim it.`)) {
+                        unclaimDelivery(d.id, driverId);
+                      }
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "8px 16px",
+                      border: "none",
+                      borderTop: `1px solid ${T.line}`,
+                      background: T.tan,
+                      color: T.mute,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    ↩ Claimed by accident? Return this delivery
+                  </button>
+                )}
+              </div>
             );
           })}
         </div>
