@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase, today, logEvent, requestNotificationPermission, notify } from "./supabase";
+import { queueAction, getQueuedActions, removeQueuedAction, queueCount, looksOffline } from "./offlineQueue";
 import { T } from "./components/ui";
 import AdminPlan from "./components/AdminPlan";
 import AdminDashboard from "./components/AdminDashboard";
@@ -7,6 +8,8 @@ import AdminEvents from "./components/AdminEvents";
 import AdminManage from "./components/AdminManage";
 import AdminReports from "./components/AdminReports";
 import AdminMissingCrates from "./components/AdminMissingCrates";
+import AdminDayList from "./components/AdminDayList";
+import AdminAllDeliveries from "./components/AdminAllDeliveries";
 import DriverApp from "./components/DriverApp";
 
 const ADMIN_PIN = "8791"; // change this to change the admin password
@@ -26,6 +29,8 @@ export default function App() {
   const [openDebts, setOpenDebts] = useState([]); // crates owed by customers, not yet collected back
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [pendingSync, setPendingSync] = useState(0);
   const [error, setError] = useState(null);
 
   // ---- Load everything for today ----
@@ -87,6 +92,51 @@ export default function App() {
     }, 5000);
     return () => clearInterval(interval);
   }, [loadAll]);
+
+  // Offline queue: process anything waiting whenever we come back online,
+  // and check periodically too (some browsers don't fire 'online' reliably)
+  const processQueue = useCallback(async () => {
+    if (!navigator.onLine) return;
+    let items;
+    try {
+      items = await getQueuedActions();
+    } catch {
+      return;
+    }
+    for (const item of items) {
+      try {
+        if (item.actionName === "updateStatus") {
+          const [id, status, ctx] = item.args;
+          await runUpdateStatus(id, status, ctx);
+        }
+        await removeQueuedAction(item.id);
+      } catch (e) {
+        if (!looksOffline(e)) await removeQueuedAction(item.id); // a real error, not just offline — drop it, don't retry forever
+        break; // stop here, try the rest next time
+      }
+    }
+    const remaining = await queueCount();
+    setPendingSync(remaining);
+    loadAll();
+  }, [loadAll]);
+
+  useEffect(() => {
+    const goOnline = () => {
+      setIsOnline(true);
+      processQueue();
+    };
+    const goOffline = () => setIsOnline(false);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    queueCount().then(setPendingSync);
+    processQueue();
+    const interval = setInterval(processQueue, 15000);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+      clearInterval(interval);
+    };
+  }, [processQueue]);
 
   // Ask for notification permission once the admin unlocks the dashboard
   useEffect(() => {
@@ -155,21 +205,71 @@ export default function App() {
     return true;
   };
 
-  // Route status: pending -> in_transit -> arrived
-  const updateStatus = async (id, status, ctx) => {
-    const timeCol = status === "in_transit" ? { started_at: new Date().toISOString() } : status === "arrived" ? { arrived_at: new Date().toISOString() } : {};
-    const { error } = await supabase.from("deliveries").update({ status, ...timeCol }).eq("id", id);
-    if (error) {
-      alert("Could not update: " + error.message);
+  // Undo an accidental claim — only allowed before any progress has been made,
+  // so nothing already photographed/delivered can get silently orphaned.
+  const unclaimDelivery = async (id, driverId) => {
+    const { data: cur, error: e1 } = await supabase
+      .from("deliveries")
+      .select("driver_id, customer_id, status, crates_delivered")
+      .eq("id", id)
+      .single();
+    if (e1) {
+      alert("Could not undo: " + e1.message);
       return;
     }
+    if (cur.driver_id !== driverId) {
+      alert("This isn't your delivery to return.");
+      loadAll();
+      return;
+    }
+    if ((cur.crates_delivered || 0) > 0) {
+      alert("Can't return this — some crates have already been delivered here.");
+      return;
+    }
+    const { error } = await supabase
+      .from("deliveries")
+      .update({ driver_id: null, helper_ids: [], claimed_at: null, status: "pending", started_at: null })
+      .eq("id", id);
+    if (error) {
+      alert("Could not undo: " + error.message);
+      return;
+    }
+    await logEvent({ driver_id: driverId, customer_id: cur.customer_id, delivery_id: id, event_type: "unclaimed" });
+    loadAll();
+  };
+
+  // Route status: pending -> in_transit -> arrived
+  // Offline-aware: this doesn't need a photo, so it's the one action that
+  // queues automatically and sends itself once signal comes back.
+  const runUpdateStatus = async (id, status, ctx) => {
+    const timeCol = status === "in_transit" ? { started_at: new Date().toISOString() } : status === "arrived" ? { arrived_at: new Date().toISOString() } : {};
+    const { error } = await supabase.from("deliveries").update({ status, ...timeCol }).eq("id", id);
+    if (error) throw error;
     await logEvent({
       driver_id: ctx.driver_id,
       customer_id: ctx.customer_id,
       delivery_id: id,
       event_type: status === "in_transit" ? "route_started" : "arrived",
     });
-    loadAll();
+  };
+
+  const updateStatus = async (id, status, ctx) => {
+    if (!navigator.onLine) {
+      await queueAction("updateStatus", [id, status, ctx]);
+      setPendingSync((n) => n + 1);
+      return;
+    }
+    try {
+      await runUpdateStatus(id, status, ctx);
+      loadAll();
+    } catch (e) {
+      if (looksOffline(e)) {
+        await queueAction("updateStatus", [id, status, ctx]);
+        setPendingSync((n) => n + 1);
+      } else {
+        alert("Could not update: " + e.message);
+      }
+    }
   };
 
   // Save a partial drop-off (driver couldn't carry the full order in one trip).
@@ -305,6 +405,42 @@ export default function App() {
     loadAll();
   };
 
+  // Driver-facing collection: requires a photo, supports partial (some crates now, rest still owed)
+  const collectMissingCrates = async (deliveryId, driverId, amountCollected, photoUrl) => {
+    const { data: cur, error: e1 } = await supabase
+      .from("deliveries")
+      .select("missing_crates, missing_crates_photos")
+      .eq("id", deliveryId)
+      .single();
+    if (e1) {
+      alert("Could not save: " + e1.message);
+      return;
+    }
+    const remaining = Math.max(0, (cur.missing_crates || 0) - Number(amountCollected || 0));
+    const resolved = remaining <= 0;
+    const mergedPhotos = [...(cur.missing_crates_photos || []), photoUrl];
+    const { error } = await supabase
+      .from("deliveries")
+      .update({
+        missing_crates: remaining,
+        missing_crates_photos: mergedPhotos,
+        missing_crates_resolved: resolved,
+        missing_crates_resolved_at: resolved ? new Date().toISOString() : null,
+      })
+      .eq("id", deliveryId);
+    if (error) {
+      alert("Could not save: " + error.message);
+      return;
+    }
+    await logEvent({
+      driver_id: driverId,
+      delivery_id: deliveryId,
+      event_type: "debt_resolved",
+      detail: resolved ? "Fully collected" : `Collected ${amountCollected}, ${remaining} still owed`,
+    });
+    loadAll();
+  };
+
   // ---- Layout ----
   return (
     <div
@@ -386,6 +522,38 @@ export default function App() {
           </div>
         )}
 
+        {!isOnline && (
+          <div
+            style={{
+              background: "#3A3A32",
+              color: "#F0E9C9",
+              borderRadius: 10,
+              padding: "10px 14px",
+              fontSize: 13,
+              fontWeight: 700,
+              marginBottom: 14,
+            }}
+          >
+            📡 No signal — Start route / Arrived taps are saved and will send automatically once you're back online.
+            {pendingSync > 0 && ` (${pendingSync} waiting)`}
+          </div>
+        )}
+        {isOnline && pendingSync > 0 && (
+          <div
+            style={{
+              background: T.greenBg,
+              color: T.green,
+              borderRadius: 10,
+              padding: "10px 14px",
+              fontSize: 13,
+              fontWeight: 700,
+              marginBottom: 14,
+            }}
+          >
+            Syncing {pendingSync} saved action{pendingSync !== 1 ? "s" : ""}…
+          </div>
+        )}
+
         {loading ? (
           <div style={{ textAlign: "center", color: T.mute, padding: 50 }}>Loading…</div>
         ) : device === "admin" && !adminUnlocked ? (
@@ -457,6 +625,7 @@ export default function App() {
             <div style={{ display: "flex", alignItems: "center", gap: 18, marginBottom: 16, borderBottom: `1.5px solid ${T.line}`, flexWrap: "wrap" }}>
               {[
                 { key: "plan", label: "Plan" },
+                { key: "today", label: "Today" },
                 { key: "live", label: "Live" },
                 { key: "events", label: "Events" },
                 { key: "missing", label: "Missing" },
@@ -526,6 +695,8 @@ export default function App() {
                 addDelivery={addDelivery}
                 removeDelivery={removeDelivery}
               />
+            ) : adminTab === "today" ? (
+              <AdminAllDeliveries drivers={drivers} customers={customers} helpers={helpers} deliveries={deliveries} />
             ) : adminTab === "live" ? (
               <AdminDashboard
                 drivers={drivers}
@@ -536,6 +707,8 @@ export default function App() {
               />
             ) : adminTab === "events" ? (
               <AdminEvents drivers={drivers} customers={customers} events={events} />
+            ) : adminTab === "daylist" ? (
+              <AdminDayList drivers={drivers} customers={customers} helpers={helpers} deliveries={deliveries} />
             ) : adminTab === "missing" ? (
               <AdminMissingCrates
                 customers={customers}
@@ -568,11 +741,13 @@ export default function App() {
             crateReturns={crateReturns}
             openDebts={openDebts}
             claimDelivery={claimDelivery}
+            unclaimDelivery={unclaimDelivery}
             updateStatus={updateStatus}
             submitPartialDelivery={submitPartialDelivery}
             markDelivered={markDelivered}
             submitCrateReturn={submitCrateReturn}
             resolveMissingCrates={resolveMissingCrates}
+            collectMissingCrates={collectMissingCrates}
           />
         )}
       </div>
