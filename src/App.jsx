@@ -711,7 +711,7 @@ export default function App() {
                 customers={customers}
                 drivers={drivers}
                 openDebts={openDebts}
-                resolveMissingCrates={resolveMissingCrates}
+                collectMissingCrates={collectMissingCrates}
               />
             ) : adminTab === "reports" ? (
               <AdminReports drivers={drivers} customers={customers} helpers={helpers} />
