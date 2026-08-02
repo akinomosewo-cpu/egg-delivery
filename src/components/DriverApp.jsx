@@ -668,13 +668,9 @@ export default function DriverApp({
                     <div style={{ background: "#fff", borderRadius: 10, padding: 12, border: `1.5px solid ${T.line}` }}>
                       <div style={{ marginBottom: 10 }}>
                         <NumInput
-                          label={`How many crates? (max ${debt.missing_crates})`}
+                          label={`How many crates? (${debt.missing_crates} owed)`}
                           value={collectAmount}
-                          onChange={(v) => {
-                            if (v === "") return setCollectAmount("");
-                            const n = Number(v);
-                            setCollectAmount(n > debt.missing_crates ? String(debt.missing_crates) : v);
-                          }}
+                          onChange={setCollectAmount}
                           width={120}
                         />
                       </div>
