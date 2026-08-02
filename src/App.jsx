@@ -704,7 +704,7 @@ export default function App() {
               />
             ) : adminTab === "events" ? (
               <AdminEvents drivers={drivers} customers={customers} events={events} />
-            ) : adminTab === "daylist" ? (
+            ) : adminTab === "today" ? (
               <AdminDayList drivers={drivers} customers={customers} helpers={helpers} deliveries={deliveries} />
             ) : adminTab === "missing" ? (
               <AdminMissingCrates
