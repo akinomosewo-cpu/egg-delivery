@@ -1,4 +1,5 @@
-import { T, Tag, fmtQty, fmtTime } from "./ui";
+import { useState } from "react";
+import { T, Tag, fmtQty, fmtTime, fmtDateTime } from "./ui";
 
 const money = (n) => `₦${Number(n || 0).toLocaleString("en-NG")}`;
 
@@ -16,6 +17,7 @@ const STATUS_COLOR = {
 };
 
 export default function AdminDayList({ drivers, customers, helpers, deliveries }) {
+  const [expandedId, setExpandedId] = useState(null);
   const rows = [...deliveries].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
   const totals = {
@@ -65,14 +67,28 @@ export default function AdminDayList({ drivers, customers, helpers, deliveries }
           const [tagColor, tagBg] = STATUS_COLOR[d.status] || STATUS_COLOR.pending;
           const owesMore = d.missing_crates > 0 && !d.missing_crates_resolved;
 
+          const isOpen = expandedId === d.id;
+          const sizes = [
+            ["Big large", d.big_large_delivered],
+            ["Small large", d.small_large_delivered],
+            ["Medium", d.medium_delivered],
+            ["Pullet", d.pullet_delivered],
+          ].filter(([, v]) => v > 0);
+
           return (
-            <div
+            <button
               key={d.id}
+              onClick={() => setExpandedId(isOpen ? null : d.id)}
               style={{
                 background: T.card,
                 border: `1.5px solid ${T.line}`,
                 borderRadius: 10,
                 padding: "10px 12px",
+                textAlign: "left",
+                cursor: "pointer",
+                fontFamily: "inherit",
+                width: "100%",
+                display: "block",
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
@@ -112,9 +128,88 @@ export default function AdminDayList({ drivers, customers, helpers, deliveries }
               )}
 
               {d.status === "delivered" && (
-                <div style={{ fontSize: 11, color: T.mute, marginTop: 4 }}>Delivered {fmtTime(d.delivered_at)}</div>
+                <div style={{ fontSize: 11, color: T.mute, marginTop: 4 }}>
+                  Delivered {fmtTime(d.delivered_at)} · {isOpen ? "▲ Hide details" : "▼ View details"}
+                </div>
               )}
-            </div>
+              {d.status !== "delivered" && (
+                <div style={{ fontSize: 11, color: T.mute, marginTop: 4, fontWeight: 700 }}>
+                  {isOpen ? "▲ Hide details" : "▼ View details"}
+                </div>
+              )}
+
+              {isOpen && (
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.line}`, cursor: "default" }}
+                >
+                  {d.crates_assigned > 0 && (
+                    <div style={{ fontSize: 12, color: T.mute, marginBottom: 8 }}>
+                      Assigned {fmtQty(d.crates_assigned, d.eggs_assigned)}
+                    </div>
+                  )}
+
+                  {sizes.length > 0 && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 11, color: T.mute, fontWeight: 700, marginBottom: 2 }}>SIZE BREAKDOWN</div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{sizes.map(([label, v]) => `${label}: ${v}`).join(" · ")}</div>
+                    </div>
+                  )}
+
+                  {(d.missing_crates > 0 || d.missing_eggs > 0) && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 11, color: T.mute, fontWeight: 700, marginBottom: 2 }}>MISSING / CRACKED</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: d.missing_crates_resolved ? T.green : T.red }}>
+                        {d.missing_crates || 0} crates missing · {d.missing_eggs || 0} eggs cracked
+                        {d.missing_crates_resolved && (
+                          <div style={{ fontWeight: 600, marginTop: 2 }}>✓ Collected back {fmtDateTime(d.missing_crates_resolved_at)}</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {d.receipt_url && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 11, color: T.mute, fontWeight: 700, marginBottom: 4 }}>RECEIPT</div>
+                      <a href={d.receipt_url} target="_blank" rel="noreferrer">
+                        <img src={d.receipt_url} alt="receipt" style={{ width: 70, height: 70, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }} />
+                      </a>
+                    </div>
+                  )}
+
+                  {((d.photo_urls && d.photo_urls.length > 0) || d.video_url) && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 11, color: T.mute, fontWeight: 700, marginBottom: 4 }}>PHOTOS / VIDEO</div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {(d.photo_urls || []).map((p, i) => (
+                          <a key={i} href={p} target="_blank" rel="noreferrer">
+                            <img src={p} alt={`photo ${i + 1}`} style={{ width: 54, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }} />
+                          </a>
+                        ))}
+                        {d.video_url && (
+                          <a href={d.video_url} target="_blank" rel="noreferrer">
+                            <video src={d.video_url} style={{ width: 90, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }} muted />
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <div style={{ fontSize: 11, color: T.mute, fontWeight: 700, marginBottom: 4 }}>SIGNATURE</div>
+                    {d.signature_url ? (
+                      <a href={d.signature_url} target="_blank" rel="noreferrer">
+                        <img src={d.signature_url} alt="signature" style={{ width: 110, height: 48, objectFit: "contain", background: "#fff", borderRadius: 8, border: `1.5px solid ${T.line}` }} />
+                      </a>
+                    ) : (
+                      <div style={{ fontSize: 12, color: T.mute, fontStyle: "italic" }}>
+                        {d.status === "delivered" ? "Customer wasn't available to sign" : "Not delivered yet"}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </button>
           );
         })}
       </div>
