@@ -9,7 +9,11 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
   const [medium, setMedium] = useState("");
   const [pullet, setPullet] = useState("");
   const [extra, setExtra] = useState("");
-  const [price, setPrice] = useState("");
+  const [priceBigLarge, setPriceBigLarge] = useState("");
+  const [priceSmallLarge, setPriceSmallLarge] = useState("");
+  const [priceMedium, setPriceMedium] = useState("");
+  const [pricePullet, setPricePullet] = useState("");
+  const [priceExtra, setPriceExtra] = useState("");
   const [saving, setSaving] = useState(false);
 
   const matches = search
@@ -26,6 +30,14 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
   // Crates are auto-calculated: sum of the size categories in crates (Extra excluded)
   const crates = (Number(bigLarge) || 0) + (Number(smallLarge) || 0) + (Number(medium) || 0) + (Number(pullet) || 0);
 
+  // Total price is auto-calculated: each category's quantity × its price
+  const totalPrice =
+    (Number(bigLarge) || 0) * (Number(priceBigLarge) || 0) +
+    (Number(smallLarge) || 0) * (Number(priceSmallLarge) || 0) +
+    (Number(medium) || 0) * (Number(priceMedium) || 0) +
+    (Number(pullet) || 0) * (Number(pricePullet) || 0) +
+    (Number(extra) || 0) * (Number(priceExtra) || 0);
+
   const submit = async () => {
     if (!chosen || crates === 0) return;
     setSaving(true);
@@ -38,17 +50,21 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
       medium_assigned: Number(medium) || 0,
       pullet_assigned: Number(pullet) || 0,
       extra_assigned: Number(extra) || 0,
-      price_due: Number(price) || 0,
+      price_due: totalPrice,
     });
     setSaving(false);
     setSearch("");
     setCustomerId(null);
-    setPrice("");
     setBigLarge("");
     setSmallLarge("");
     setMedium("");
     setPullet("");
     setExtra("");
+    setPriceBigLarge("");
+    setPriceSmallLarge("");
+    setPriceMedium("");
+    setPricePullet("");
+    setPriceExtra("");
   };
 
   return (
@@ -160,37 +176,60 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
 
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 8 }}>
-            Crate breakdown by size — total fills in automatically (Extra not counted)
+            Crate breakdown by size — Crates total fills in automatically (Extra not counted)
           </div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <NumInput label="Big large" value={bigLarge} onChange={setBigLarge} width={90} />
-            <NumInput label="Small large" value={smallLarge} onChange={setSmallLarge} width={90} />
-            <NumInput label="Medium" value={medium} onChange={setMedium} width={90} />
-            <NumInput label="Pullet" value={pullet} onChange={setPullet} width={90} />
-            <NumInput label="Extra" value={extra} onChange={setExtra} width={90} decimal fractions />
-          </div>
-        </div>
-
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 4 }}>Crates (auto-calculated)</div>
-          <div
-            style={{
-              width: 120,
-              padding: "10px 10px",
-              fontSize: 16,
-              fontWeight: 800,
-              color: T.ink,
-              border: `1.5px solid ${T.line}`,
-              borderRadius: 8,
-              background: T.tan,
-            }}
-          >
-            {crates}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {[
+              ["Big large", bigLarge, setBigLarge, priceBigLarge, setPriceBigLarge],
+              ["Small large", smallLarge, setSmallLarge, priceSmallLarge, setPriceSmallLarge],
+              ["Medium", medium, setMedium, priceMedium, setPriceMedium],
+              ["Pullet", pullet, setPullet, pricePullet, setPricePullet],
+            ].map(([label, qty, setQty, pr, setPr]) => (
+              <div key={label} style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
+                <NumInput label={label} value={qty} onChange={setQty} width={90} />
+                <NumInput label="Price per crate (₦)" value={pr} onChange={setPr} width={130} decimal />
+              </div>
+            ))}
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
+              <NumInput label="Extra" value={extra} onChange={setExtra} width={90} decimal fractions />
+              <NumInput label="Price per crate (₦)" value={priceExtra} onChange={setPriceExtra} width={130} decimal />
+            </div>
           </div>
         </div>
 
-        <div style={{ marginBottom: 16 }}>
-          <NumInput label="Price customer pays (₦)" value={price} onChange={setPrice} width={160} decimal />
+        <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 4 }}>Crates (auto-calculated)</div>
+            <div
+              style={{
+                padding: "10px 10px",
+                fontSize: 16,
+                fontWeight: 800,
+                color: T.ink,
+                border: `1.5px solid ${T.line}`,
+                borderRadius: 8,
+                background: T.tan,
+              }}
+            >
+              {crates}
+            </div>
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 4 }}>Total price (auto-calculated)</div>
+            <div
+              style={{
+                padding: "10px 10px",
+                fontSize: 16,
+                fontWeight: 800,
+                color: T.ink,
+                border: `1.5px solid ${T.line}`,
+                borderRadius: 8,
+                background: T.tan,
+              }}
+            >
+              ₦{totalPrice.toLocaleString("en-NG")}
+            </div>
+          </div>
         </div>
 
         <Btn full onClick={submit} disabled={saving || !chosen || crates === 0}>
