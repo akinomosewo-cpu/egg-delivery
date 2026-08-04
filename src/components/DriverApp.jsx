@@ -260,6 +260,7 @@ export default function DriverApp({
             const thisVisit = dc === "" ? 0 : Number(dc);
             const projectedTotal = alreadyDelivered + thisVisit;
             const isFinalVisit = projectedTotal >= stop.crates_assigned && thisVisit > 0;
+            const receiptRequired = !c || c.requires_receipt !== false;
 
             return (
               <>
@@ -317,19 +318,21 @@ export default function DriverApp({
                       <NumInput label="Payment collected (₦)" value={payment} onChange={setPayment} width={160} decimal />
                     </div>
 
-                    <div style={{ marginBottom: 18 }}>
-                      <MediaCapture
-                        photos={receiptPhoto ? [receiptPhoto] : []}
-                        onAddPhoto={(url) => setReceiptPhoto(url)}
-                        onRemovePhoto={() => setReceiptPhoto(null)}
-                        video={null}
-                        onSetVideo={() => {}}
-                        onRemoveVideo={() => {}}
-                        upload={uploadPhoto}
-                        maxPhotos={1}
-                        label="Receipt photo (required)"
-                      />
-                    </div>
+                    {receiptRequired && (
+                      <div style={{ marginBottom: 18 }}>
+                        <MediaCapture
+                          photos={receiptPhoto ? [receiptPhoto] : []}
+                          onAddPhoto={(url) => setReceiptPhoto(url)}
+                          onRemovePhoto={() => setReceiptPhoto(null)}
+                          video={null}
+                          onSetVideo={() => {}}
+                          onRemoveVideo={() => {}}
+                          upload={uploadPhoto}
+                          maxPhotos={1}
+                          label="Receipt photo (required)"
+                        />
+                      </div>
+                    )}
 
                     <div style={{ marginBottom: 18 }}>
                       <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Customer signature</div>
@@ -372,7 +375,7 @@ export default function DriverApp({
                     busy ||
                     thisVisit <= 0 ||
                     stopPhotos.length === 0 ||
-                    (isFinalVisit && (!receiptPhoto || (!signatureUrl && !signatureSkipped)))
+                    (isFinalVisit && ((receiptRequired && !receiptPhoto) || (!signatureUrl && !signatureSkipped)))
                   }
                   onClick={async () => {
                     setBusy(true);
