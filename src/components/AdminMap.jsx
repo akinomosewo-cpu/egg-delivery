@@ -47,7 +47,7 @@ export default function AdminMap({ drivers, customers, driverLocations, geocodeC
     const map = leafletMapRef.current;
     if (!map || markersRef.current.length === 0) return;
     const group = L.featureGroup(markersRef.current);
-    map.fitBounds(group.getBounds().pad(0.2));
+    map.fitBounds(group.getBounds().pad(0.2), { maxZoom: 14 });
   };
 
   // Redraw markers whenever data changes
