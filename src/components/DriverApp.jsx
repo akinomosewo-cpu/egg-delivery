@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { T, Btn, Tag, NumInput, MediaCapture, SignaturePad, fmtQty } from "./ui";
 import { uploadPhoto } from "../supabase";
 
@@ -35,6 +35,7 @@ export default function DriverApp({
   submitCrateReturn,
   resolveMissingCrates,
   collectMissingCrates,
+  updateDriverLocation,
 }) {
   const [driverId, setDriverId] = useState(null);
   const [claimingId, setClaimingId] = useState(null);
@@ -56,6 +57,24 @@ export default function DriverApp({
   const [collectingDebtId, setCollectingDebtId] = useState(null);
   const [collectAmount, setCollectAmount] = useState("");
   const [collectPhoto, setCollectPhoto] = useState(null);
+
+  // Quietly report this driver's live position while they're logged in —
+  // only works while this screen is open and the phone is unlocked.
+  useEffect(() => {
+    if (!driverId || !("geolocation" in navigator)) return;
+    let lastSent = 0;
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const now = Date.now();
+        if (now - lastSent < 20000) return; // at most once every 20s
+        lastSent = now;
+        updateDriverLocation(driverId, pos.coords.latitude, pos.coords.longitude);
+      },
+      (err) => console.error("Location error:", err.message),
+      { enableHighAccuracy: false, maximumAge: 15000, timeout: 20000 }
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [driverId, updateDriverLocation]);
 
 
   if (!driverId) {

@@ -9,6 +9,7 @@ import AdminManage from "./components/AdminManage";
 import AdminReports from "./components/AdminReports";
 import AdminMissingCrates from "./components/AdminMissingCrates";
 import AdminDayList from "./components/AdminDayList";
+import AdminMap from "./components/AdminMap";
 import DriverApp from "./components/DriverApp";
 
 const ADMIN_PIN = "8791"; // change this to change the admin password
@@ -26,6 +27,7 @@ export default function App() {
   const [crateReturns, setCrateReturns] = useState([]);
   const [events, setEvents] = useState([]);
   const [openDebts, setOpenDebts] = useState([]); // crates owed by customers, not yet collected back
+  const [driverLocations, setDriverLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -35,7 +37,7 @@ export default function App() {
   // ---- Load everything for today ----
   const loadAll = useCallback(async () => {
     try {
-      const [drv, cus, hlp, del, ret, evt, debts] = await Promise.all([
+      const [drv, cus, hlp, del, ret, evt, debts, locs] = await Promise.all([
         supabase.from("drivers").select("*").eq("active", true).order("name"),
         supabase.from("customers").select("*").eq("active", true).order("name"),
         supabase.from("helpers").select("*").eq("active", true).order("name"),
@@ -43,8 +45,9 @@ export default function App() {
         supabase.from("crate_returns").select("*").eq("return_date", today()),
         supabase.from("delivery_events").select("*").order("event_date", { ascending: false }).order("created_at", { ascending: true }).limit(300),
         supabase.from("deliveries").select("*").gt("missing_crates", 0).eq("missing_crates_resolved", false).order("delivery_date"),
+        supabase.from("driver_locations").select("*"),
       ]);
-      const firstError = drv.error || cus.error || hlp.error || del.error || ret.error || evt.error || debts.error;
+      const firstError = drv.error || cus.error || hlp.error || del.error || ret.error || evt.error || debts.error || locs.error;
       if (firstError) throw firstError;
       setDrivers(drv.data);
       setCustomers(cus.data);
@@ -53,6 +56,7 @@ export default function App() {
       setCrateReturns(ret.data);
       setEvents(evt.data);
       setOpenDebts(debts.data);
+      setDriverLocations(locs.data);
       setError(null);
     } catch (e) {
       console.error(e);
@@ -72,6 +76,7 @@ export default function App() {
       .on("postgres_changes", { event: "*", schema: "public", table: "drivers" }, loadAll)
       .on("postgres_changes", { event: "*", schema: "public", table: "customers" }, loadAll)
       .on("postgres_changes", { event: "*", schema: "public", table: "helpers" }, loadAll)
+      .on("postgres_changes", { event: "*", schema: "public", table: "driver_locations" }, loadAll)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "delivery_events" }, (payload) => {
         loadAll();
         const row = payload.new;
@@ -376,6 +381,16 @@ export default function App() {
     else loadAll();
   };
 
+  // Driver's live position — upserted quietly in the background while their app is open
+  const updateDriverLocation = async (driverId, lat, lng) => {
+    await supabase.from("driver_locations").upsert({ driver_id: driverId, lat, lng, updated_at: new Date().toISOString() });
+  };
+
+  // One-time lookup: turn a customer's text address into map coordinates, save it so it's never re-looked-up
+  const geocodeCustomer = async (customerId, lat, lng) => {
+    await supabase.from("customers").update({ lat, lng }).eq("id", customerId);
+  };
+
   const addHelper = async (name) => {
     const { error } = await supabase.from("helpers").insert({ name });
     if (error) alert("Could not add: " + error.message);
@@ -626,6 +641,7 @@ export default function App() {
                 { key: "plan", label: "Plan" },
                 { key: "today", label: "Today" },
                 { key: "live", label: "Live" },
+                { key: "map", label: "Map" },
                 { key: "events", label: "Events" },
                 { key: "missing", label: "Missing" },
                 { key: "reports", label: "Reports" },
@@ -704,6 +720,8 @@ export default function App() {
               />
             ) : adminTab === "events" ? (
               <AdminEvents drivers={drivers} customers={customers} events={events} />
+            ) : adminTab === "map" ? (
+              <AdminMap drivers={drivers} customers={customers} driverLocations={driverLocations} geocodeCustomer={geocodeCustomer} />
             ) : adminTab === "today" ? (
               <AdminDayList drivers={drivers} customers={customers} helpers={helpers} deliveries={deliveries} />
             ) : adminTab === "missing" ? (
@@ -745,6 +763,7 @@ export default function App() {
             submitCrateReturn={submitCrateReturn}
             resolveMissingCrates={resolveMissingCrates}
             collectMissingCrates={collectMissingCrates}
+            updateDriverLocation={updateDriverLocation}
           />
         )}
       </div>
