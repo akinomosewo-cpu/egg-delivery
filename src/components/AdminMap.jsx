@@ -41,7 +41,7 @@ export default function AdminMap({ drivers, customers, driverLocations, geocodeC
     };
   }, []);
 
-  const hasFittedRef = useRef(false);
+  const lastMarkerCountRef = useRef(0);
 
   const fitToMarkers = () => {
     const map = leafletMapRef.current;
@@ -76,13 +76,13 @@ export default function AdminMap({ drivers, customers, driverLocations, geocodeC
       markersRef.current.push(marker);
     });
 
-    // The first time pins actually exist, zoom to show them —
-    // after that, leave the view alone so it doesn't jump around
-    // every time a driver's position updates.
-    if (!hasFittedRef.current && markersRef.current.length > 0) {
+    // Re-fit whenever the number of pins changes (not just once ever) —
+    // handles drivers and customers loading at slightly different times
+    // without constantly jumping the view on every position update.
+    if (markersRef.current.length > 0 && markersRef.current.length !== lastMarkerCountRef.current) {
       fitToMarkers();
-      hasFittedRef.current = true;
     }
+    lastMarkerCountRef.current = markersRef.current.length;
   }, [driverLocations, drivers, customers]);
 
   const geocodeMissing = async () => {
