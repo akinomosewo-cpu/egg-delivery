@@ -44,6 +44,11 @@ export default function AdminMap({ drivers, customers, driverLocations, deliveri
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState(null);
   const [, forceRedraw] = useState(0); // bumped once a route finishes loading async
+  const [placingId, setPlacingId] = useState(null);
+  const placingIdRef = useRef(null);
+  useEffect(() => {
+    placingIdRef.current = placingId;
+  }, [placingId]);
 
   useEffect(() => {
     if (leafletMapRef.current || !mapRef.current) return;
@@ -52,6 +57,11 @@ export default function AdminMap({ drivers, customers, driverLocations, deliveri
       attribution: "© OpenStreetMap contributors",
       maxZoom: 19,
     }).addTo(map);
+    map.on("click", (e) => {
+      if (!placingIdRef.current) return;
+      geocodeCustomer(placingIdRef.current, e.latlng.lat, e.latlng.lng);
+      setPlacingId(null);
+    });
     leafletMapRef.current = map;
     return () => {
       map.remove();
@@ -254,6 +264,38 @@ export default function AdminMap({ drivers, customers, driverLocations, deliveri
         </div>
       </div>
       {geocodeStatus && <div style={{ fontSize: 12, color: T.mute }}>{geocodeStatus}</div>}
+
+      {(() => {
+        const notOnMap = customers.filter((c) => c.lat == null || c.lng == null);
+        if (notOnMap.length === 0) return null;
+        return (
+          <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 10, padding: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
+              Not on the map yet ({notOnMap.length}) — the automatic lookup doesn't always find a match, so you can drop the pin yourself instead:
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {notOnMap.map((c) => (
+                <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</span>
+                  <Btn
+                    small
+                    kind={placingId === c.id ? "green" : "ghost"}
+                    onClick={() => setPlacingId(placingId === c.id ? null : c.id)}
+                  >
+                    {placingId === c.id ? "Tap the map…" : "📍 Place manually"}
+                  </Btn>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {placingId && (
+        <div style={{ background: "#F5FBE6", border: `1.5px solid ${T.ink}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, fontWeight: 700, textAlign: "center" }}>
+          Tap anywhere on the map to place {customers.find((c) => c.id === placingId)?.name}
+        </div>
+      )}
 
       <div
         ref={mapRef}
