@@ -41,6 +41,15 @@ export default function AdminMap({ drivers, customers, driverLocations, geocodeC
     };
   }, []);
 
+  const hasFittedRef = useRef(false);
+
+  const fitToMarkers = () => {
+    const map = leafletMapRef.current;
+    if (!map || markersRef.current.length === 0) return;
+    const group = L.featureGroup(markersRef.current);
+    map.fitBounds(group.getBounds().pad(0.2));
+  };
+
   // Redraw markers whenever data changes
   useEffect(() => {
     const map = leafletMapRef.current;
@@ -66,6 +75,14 @@ export default function AdminMap({ drivers, customers, driverLocations, geocodeC
         .bindPopup(`<b>${c.name}</b>${c.address ? `<br/>${c.address}` : ""}`);
       markersRef.current.push(marker);
     });
+
+    // The first time pins actually exist, zoom to show them —
+    // after that, leave the view alone so it doesn't jump around
+    // every time a driver's position updates.
+    if (!hasFittedRef.current && markersRef.current.length > 0) {
+      fitToMarkers();
+      hasFittedRef.current = true;
+    }
   }, [driverLocations, drivers, customers]);
 
   const geocodeMissing = async () => {
@@ -100,22 +117,39 @@ export default function AdminMap({ drivers, customers, driverLocations, geocodeC
         <div style={{ fontSize: 13, color: T.mute, fontWeight: 600 }}>
           {activeDrivers.length} driver{activeDrivers.length !== 1 ? "s" : ""} live (last 30 min)
         </div>
-        <button
-          onClick={geocodeMissing}
-          disabled={geocoding}
-          style={{
-            background: "none",
-            border: "none",
-            color: T.ink,
-            fontSize: 12,
-            fontWeight: 700,
-            textDecoration: "underline",
-            cursor: geocoding ? "wait" : "pointer",
-            fontFamily: "inherit",
-          }}
-        >
-          {geocoding ? "Locating…" : "Place customers on map"}
-        </button>
+        <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+          <button
+            onClick={fitToMarkers}
+            style={{
+              background: "none",
+              border: "none",
+              color: T.ink,
+              fontSize: 12,
+              fontWeight: 700,
+              textDecoration: "underline",
+              cursor: "pointer",
+              fontFamily: "inherit",
+            }}
+          >
+            Recenter
+          </button>
+          <button
+            onClick={geocodeMissing}
+            disabled={geocoding}
+            style={{
+              background: "none",
+              border: "none",
+              color: T.ink,
+              fontSize: 12,
+              fontWeight: 700,
+              textDecoration: "underline",
+              cursor: geocoding ? "wait" : "pointer",
+              fontFamily: "inherit",
+            }}
+          >
+            {geocoding ? "Locating…" : "Place customers on map"}
+          </button>
+        </div>
       </div>
       {geocodeStatus && <div style={{ fontSize: 12, color: T.mute }}>{geocodeStatus}</div>}
 
