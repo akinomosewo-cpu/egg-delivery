@@ -114,7 +114,8 @@ export default function DriverApp({
         </Btn>
         <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 18 }}>
           <div style={{ fontWeight: 800, fontSize: 18 }}>{c ? c.name : "…"}</div>
-          <div style={{ fontSize: 13, color: T.mute, marginBottom: 12 }}>{c && c.area}</div>
+          <div style={{ fontSize: 13, color: T.mute, marginBottom: 4 }}>{c && c.area}</div>
+          {c && c.address && <div style={{ fontSize: 12, color: T.mute, marginBottom: 12 }}>📍 {c.address}</div>}
           <div style={{ background: T.tan, borderRadius: 8, padding: "10px 12px", fontSize: 14, fontWeight: 700, marginBottom: 18 }}>
             {fmtQty(claiming.crates_assigned, claiming.eggs_assigned)}
             {sizesLine(claiming) && <div style={{ fontSize: 12, fontWeight: 600, color: T.mute, marginTop: 4 }}>{sizesLine(claiming)}</div>}
@@ -195,7 +196,8 @@ export default function DriverApp({
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
             <div>
               <div style={{ fontWeight: 800, fontSize: 18 }}>{name}</div>
-              <div style={{ fontSize: 13, color: T.mute, marginBottom: 6 }}>{c && c.area}</div>
+              <div style={{ fontSize: 13, color: T.mute, marginBottom: 2 }}>{c && c.area}</div>
+              {c && c.address && <div style={{ fontSize: 12, color: T.mute, marginBottom: 6 }}>📍 {c.address}</div>}
             </div>
             <Tag color={T.mute} bg={T.tan}>
               {STATUS_LABEL[stop.status]}

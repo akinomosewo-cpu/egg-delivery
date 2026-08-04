@@ -7,6 +7,7 @@ export default function AdminManage({ drivers, customers, helpers, addDriver, de
   const [cName, setCName] = useState("");
   const [cPhone, setCPhone] = useState("");
   const [cArea, setCArea] = useState("");
+  const [cAddress, setCAddress] = useState("");
   const [hName, setHName] = useState("");
   const [busy, setBusy] = useState(false);
   const [storage, setStorage] = useState(null); // { totalBytes, fileCount }
@@ -47,10 +48,11 @@ export default function AdminManage({ drivers, customers, helpers, addDriver, de
   const saveCustomer = async () => {
     if (!cName.trim()) return;
     setBusy(true);
-    await addCustomer({ name: cName.trim(), phone: cPhone.trim() || null, area: cArea.trim() || null });
+    await addCustomer({ name: cName.trim(), phone: cPhone.trim() || null, area: cArea.trim() || null, address: cAddress.trim() || null });
     setCName("");
     setCPhone("");
     setCArea("");
+    setCAddress("");
     setBusy(false);
   };
 
@@ -97,6 +99,7 @@ export default function AdminManage({ drivers, customers, helpers, addDriver, de
                 <div style={{ fontSize: 12, color: T.mute }}>
                   {[c.area, c.phone].filter(Boolean).join(" · ")}
                 </div>
+                {c.address && <div style={{ fontSize: 11, color: T.mute, fontStyle: "italic" }}>{c.address}</div>}
               </div>
               <Btn kind="danger" small onClick={() => deactivateCustomer(c.id)}>
                 Remove
@@ -110,6 +113,7 @@ export default function AdminManage({ drivers, customers, helpers, addDriver, de
             <TextInput label="Phone (optional)" value={cPhone} onChange={setCPhone} placeholder="080…" />
             <TextInput label="Area (optional)" value={cArea} onChange={setCArea} placeholder="e.g. Wuse" />
           </div>
+          <TextInput label="Full address (optional)" value={cAddress} onChange={setCAddress} placeholder="e.g. Plot 113, Sector S, Life Camp" />
           <Btn onClick={saveCustomer} disabled={busy || !cName.trim()}>
             Add customer
           </Btn>
