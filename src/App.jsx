@@ -721,7 +721,7 @@ export default function App() {
             ) : adminTab === "events" ? (
               <AdminEvents drivers={drivers} customers={customers} events={events} />
             ) : adminTab === "map" ? (
-              <AdminMap drivers={drivers} customers={customers} driverLocations={driverLocations} geocodeCustomer={geocodeCustomer} />
+              <AdminMap drivers={drivers} customers={customers} driverLocations={driverLocations} deliveries={deliveries} geocodeCustomer={geocodeCustomer} />
             ) : adminTab === "today" ? (
               <AdminDayList drivers={drivers} customers={customers} helpers={helpers} deliveries={deliveries} />
             ) : adminTab === "missing" ? (

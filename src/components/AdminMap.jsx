@@ -2,10 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import { geocodeAddress } from "../geocode";
-import { T } from "./ui";
+import { getRoute } from "../routing";
+import { T, Btn } from "./ui";
 
-// Default Leaflet marker icons reference image files that don't resolve
-// correctly under Vite's bundling — build our own simple colored pin instead.
 const pin = (color) =>
   L.divIcon({
     className: "",
@@ -14,19 +13,38 @@ const pin = (color) =>
     iconAnchor: [8, 16],
   });
 
-const driverPin = pin("#4E8A00");
+// A driver actively en route gets a Google-Maps-style blue "current location" dot
+const currentLocationIcon = L.divIcon({
+  className: "",
+  html: `<div style="width:16px;height:16px;border-radius:50%;background:#2A7DE1;border:3px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,0.5)"></div>`,
+  iconSize: [16, 16],
+  iconAnchor: [8, 8],
+});
+
+const idleDriverPin = pin("#4E8A00");
 const customerPin = pin("#111111");
+const destinationPin = pin("#C0392B");
+const searchPin = pin("#C77F0A");
 
 const ABUJA_CENTER = [9.0765, 7.3986];
+const ACTIVE_STATUSES = ["in_transit", "arrived"];
 
-export default function AdminMap({ drivers, customers, driverLocations, geocodeCustomer }) {
+export default function AdminMap({ drivers, customers, driverLocations, deliveries, geocodeCustomer }) {
   const mapRef = useRef(null);
   const leafletMapRef = useRef(null);
-  const markersRef = useRef([]);
+  const customerMarkersRef = useRef([]);
+  const driverMarkersRef = useRef([]);
+  const routeLinesRef = useRef([]);
+  const searchMarkerRef = useRef(null);
+  const lastCustomerCountRef = useRef(0);
+  const routeCacheRef = useRef({}); // key: "driverId:customerId" -> [[lat,lng], ...]
   const [geocoding, setGeocoding] = useState(false);
   const [geocodeStatus, setGeocodeStatus] = useState("");
+  const [searchText, setSearchText] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState(null);
+  const [, forceRedraw] = useState(0); // bumped once a route finishes loading async
 
-  // Set up the map once
   useEffect(() => {
     if (leafletMapRef.current || !mapRef.current) return;
     const map = L.map(mapRef.current).setView(ABUJA_CENTER, 12);
@@ -41,49 +59,99 @@ export default function AdminMap({ drivers, customers, driverLocations, geocodeC
     };
   }, []);
 
-  const lastMarkerCountRef = useRef(0);
-
-  const fitToMarkers = () => {
+  // Frame around customers only — driver testing from anywhere in the
+  // world never drags the default view away from Nigeria.
+  const fitToCustomers = () => {
     const map = leafletMapRef.current;
-    if (!map || markersRef.current.length === 0) return;
-    const group = L.featureGroup(markersRef.current);
-    map.fitBounds(group.getBounds().pad(0.2), { maxZoom: 14 });
+    if (!map) return;
+    if (customerMarkersRef.current.length === 0) {
+      map.setView(ABUJA_CENTER, 12);
+      return;
+    }
+    const group = L.featureGroup(customerMarkersRef.current);
+    map.fitBounds(group.getBounds().pad(0.3), { maxZoom: 15 });
   };
 
-  // Redraw markers whenever data changes
+  // Explicit opt-in: fit around everyone currently on the map, drivers included
+  const fitToEveryone = () => {
+    const map = leafletMapRef.current;
+    const all = [...customerMarkersRef.current, ...driverMarkersRef.current];
+    if (!map || all.length === 0) return;
+    const group = L.featureGroup(all);
+    map.fitBounds(group.getBounds().pad(0.3), { maxZoom: 15 });
+  };
+
+  // Figure out which driver is actively headed to which customer right now
+  const activePairs = drivers
+    .map((drv) => {
+      const loc = driverLocations.find((l) => l.driver_id === drv.id);
+      const delivery = deliveries.find((d) => d.driver_id === drv.id && ACTIVE_STATUSES.includes(d.status));
+      if (!loc || !delivery) return null;
+      const customer = customers.find((c) => c.id === delivery.customer_id);
+      if (!customer || customer.lat == null || customer.lng == null) return null;
+      return { driver: drv, loc, customer };
+    })
+    .filter(Boolean);
+
+  // Redraw markers + routes whenever data changes
   useEffect(() => {
     const map = leafletMapRef.current;
     if (!map) return;
 
-    markersRef.current.forEach((m) => map.removeLayer(m));
-    markersRef.current = [];
+    driverMarkersRef.current.forEach((m) => map.removeLayer(m));
+    driverMarkersRef.current = [];
+    customerMarkersRef.current.forEach((m) => map.removeLayer(m));
+    customerMarkersRef.current = [];
+    routeLinesRef.current.forEach((l) => map.removeLayer(l));
+    routeLinesRef.current = [];
+
+    const activeDriverIds = new Set(activePairs.map((p) => p.driver.id));
+    const destinationCustomerIds = new Set(activePairs.map((p) => p.customer.id));
 
     driverLocations.forEach((loc) => {
       const drv = drivers.find((d) => d.id === loc.driver_id);
       if (!drv) return;
       const minsAgo = Math.round((Date.now() - new Date(loc.updated_at)) / 60000);
-      const marker = L.marker([loc.lat, loc.lng], { icon: driverPin })
+      const isActive = activeDriverIds.has(drv.id);
+      const marker = L.marker([loc.lat, loc.lng], { icon: isActive ? currentLocationIcon : idleDriverPin })
         .addTo(map)
-        .bindPopup(`<b>${drv.name}</b><br/>Updated ${minsAgo < 1 ? "just now" : `${minsAgo} min ago`}`);
-      markersRef.current.push(marker);
+        .bindPopup(`<b>${drv.name}</b>${isActive ? " — on the way" : ""}<br/>Updated ${minsAgo < 1 ? "just now" : `${minsAgo} min ago`}`);
+      driverMarkersRef.current.push(marker);
     });
 
     customers.forEach((c) => {
       if (c.lat == null || c.lng == null) return;
-      const marker = L.marker([c.lat, c.lng], { icon: customerPin })
+      const isDestination = destinationCustomerIds.has(c.id);
+      const marker = L.marker([c.lat, c.lng], { icon: isDestination ? destinationPin : customerPin })
         .addTo(map)
         .bindPopup(`<b>${c.name}</b>${c.address ? `<br/>${c.address}` : ""}`);
-      markersRef.current.push(marker);
+      customerMarkersRef.current.push(marker);
     });
 
-    // Re-fit whenever the number of pins changes (not just once ever) —
-    // handles drivers and customers loading at slightly different times
-    // without constantly jumping the view on every position update.
-    if (markersRef.current.length > 0 && markersRef.current.length !== lastMarkerCountRef.current) {
-      fitToMarkers();
+    // Draw a route line for each driver currently on their way to a stop
+    activePairs.forEach(({ driver, loc, customer }) => {
+      const key = `${driver.id}:${customer.id}`;
+      const cached = routeCacheRef.current[key];
+      if (cached) {
+        const line = L.polyline(cached, { color: "#2A7DE1", weight: 5, opacity: 0.85 }).addTo(map);
+        routeLinesRef.current.push(line);
+      } else {
+        getRoute({ lat: loc.lat, lng: loc.lng }, { lat: customer.lat, lng: customer.lng })
+          .then((points) => {
+            if (points) {
+              routeCacheRef.current[key] = points;
+              forceRedraw((n) => n + 1); // trigger a redraw now that the route is cached
+            }
+          })
+          .catch((e) => console.error("Route lookup failed:", e));
+      }
+    });
+
+    if (customerMarkersRef.current.length !== lastCustomerCountRef.current) {
+      fitToCustomers();
+      lastCustomerCountRef.current = customerMarkersRef.current.length;
     }
-    lastMarkerCountRef.current = markersRef.current.length;
-  }, [driverLocations, drivers, customers]);
+  }, [driverLocations, drivers, customers, deliveries]);
 
   const geocodeMissing = async () => {
     const missing = customers.filter((c) => c.address && (c.lat == null || c.lng == null));
@@ -93,60 +161,94 @@ export default function AdminMap({ drivers, customers, driverLocations, geocodeC
     }
     setGeocoding(true);
     let done = 0;
+    let skipped = 0;
     for (const c of missing) {
-      setGeocodeStatus(`Locating ${c.name}… (${done + 1}/${missing.length})`);
+      setGeocodeStatus(`Locating ${c.name}… (${done + skipped + 1}/${missing.length})`);
       try {
         const result = await geocodeAddress(c.address);
-        if (result) await geocodeCustomer(c.id, result.lat, result.lng);
+        if (result) {
+          await geocodeCustomer(c.id, result.lat, result.lng);
+          done++;
+        } else {
+          skipped++;
+        }
       } catch (e) {
         console.error("Geocode failed for", c.name, e);
+        skipped++;
       }
-      done++;
-      // Nominatim's usage policy asks for max ~1 request/second
       await new Promise((r) => setTimeout(r, 1100));
     }
     setGeocoding(false);
-    setGeocodeStatus(`Done — placed ${done} customer${done !== 1 ? "s" : ""} on the map.`);
+    setGeocodeStatus(
+      `Done — placed ${done} customer${done !== 1 ? "s" : ""} on the map.` +
+        (skipped > 0 ? ` (${skipped} couldn't be located — check the address.)` : "")
+    );
+  };
+
+  const runSearch = async () => {
+    if (!searchText.trim()) return;
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const result = await geocodeAddress(searchText.trim(), { restrictToAbuja: false });
+      const map = leafletMapRef.current;
+      if (!result) {
+        setSearchError("Couldn't find that place.");
+        return;
+      }
+      if (searchMarkerRef.current) map.removeLayer(searchMarkerRef.current);
+      const marker = L.marker([result.lat, result.lng], { icon: searchPin })
+        .addTo(map)
+        .bindPopup(result.label || searchText)
+        .openPopup();
+      searchMarkerRef.current = marker;
+      map.flyTo([result.lat, result.lng], 15);
+    } catch (e) {
+      setSearchError("Search failed — check your connection and try again.");
+    } finally {
+      setSearching(false);
+    }
   };
 
   const activeDrivers = driverLocations.filter((loc) => Date.now() - new Date(loc.updated_at) < 30 * 60000);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && runSearch()}
+          placeholder="Search a place or address…"
+          style={{
+            flex: 1,
+            padding: "10px 12px",
+            fontSize: 14,
+            border: `1.5px solid ${T.line}`,
+            borderRadius: 8,
+            fontFamily: "inherit",
+            color: T.ink,
+            background: "#fff",
+          }}
+        />
+        <Btn small onClick={runSearch} disabled={searching || !searchText.trim()}>
+          {searching ? "…" : "Go"}
+        </Btn>
+      </div>
+      {searchError && <div style={{ fontSize: 12, color: T.red, marginTop: -6 }}>{searchError}</div>}
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
         <div style={{ fontSize: 13, color: T.mute, fontWeight: 600 }}>
-          {activeDrivers.length} driver{activeDrivers.length !== 1 ? "s" : ""} live (last 30 min)
+          {activeDrivers.length} driver{activeDrivers.length !== 1 ? "s" : ""} live · {activePairs.length} en route
         </div>
-        <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
-          <button
-            onClick={fitToMarkers}
-            style={{
-              background: "none",
-              border: "none",
-              color: T.ink,
-              fontSize: 12,
-              fontWeight: 700,
-              textDecoration: "underline",
-              cursor: "pointer",
-              fontFamily: "inherit",
-            }}
-          >
+        <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+          <button onClick={fitToEveryone} style={linkBtnStyle}>
+            Show all
+          </button>
+          <button onClick={fitToCustomers} style={linkBtnStyle}>
             Recenter
           </button>
-          <button
-            onClick={geocodeMissing}
-            disabled={geocoding}
-            style={{
-              background: "none",
-              border: "none",
-              color: T.ink,
-              fontSize: 12,
-              fontWeight: 700,
-              textDecoration: "underline",
-              cursor: geocoding ? "wait" : "pointer",
-              fontFamily: "inherit",
-            }}
-          >
+          <button onClick={geocodeMissing} disabled={geocoding} style={{ ...linkBtnStyle, cursor: geocoding ? "wait" : "pointer" }}>
             {geocoding ? "Locating…" : "Place customers on map"}
           </button>
         </div>
@@ -165,8 +267,19 @@ export default function AdminMap({ drivers, customers, driverLocations, geocodeC
       />
 
       <div style={{ fontSize: 11, color: T.mute, textAlign: "center" }}>
-        🟢 Drivers · ⚫ Customers — driver positions only update while their app is open and their phone is unlocked.
+        🟢 Idle driver · 🔵 On the way · ⚫ Customer · 🔴 Current destination · 🟠 Search
       </div>
     </div>
   );
 }
+
+const linkBtnStyle = {
+  background: "none",
+  border: "none",
+  color: T.ink,
+  fontSize: 12,
+  fontWeight: 700,
+  textDecoration: "underline",
+  cursor: "pointer",
+  fontFamily: "inherit",
+};
