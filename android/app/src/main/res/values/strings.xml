@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">COSNG DRIVERS</string>
+    <string name="title_activity_main">COSNG DRIVERS</string>
+    <string name="package_name">com.cosng.app</string>
+    <string name="custom_url_scheme">com.cosng.app</string>
+</resources>

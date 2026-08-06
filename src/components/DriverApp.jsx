@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { T, Btn, Tag, NumInput, MediaCapture, SignaturePad, fmtQty } from "./ui";
 import { uploadPhoto } from "../supabase";
+import { tagAsDriver } from "../notifications";
+import { isInNigeria } from "../geocode";
 
 const sizesLine = (d) => {
   const parts = [
@@ -68,7 +70,12 @@ export default function DriverApp({
         const now = Date.now();
         if (now - lastSent < 20000) return; // at most once every 20s
         lastSent = now;
-        updateDriverLocation(driverId, pos.coords.latitude, pos.coords.longitude);
+        const { latitude, longitude } = pos.coords;
+        if (isInNigeria(latitude, longitude)) {
+          updateDriverLocation(driverId, latitude, longitude);
+        } else {
+          console.warn("Ignoring implausible location:", latitude, longitude);
+        }
       },
       (err) => console.error("Location error:", err.message),
       { enableHighAccuracy: false, maximumAge: 15000, timeout: 20000 }
@@ -86,7 +93,10 @@ export default function DriverApp({
         {drivers.map((d) => (
           <button
             key={d.id}
-            onClick={() => setDriverId(d.id)}
+            onClick={() => {
+              setDriverId(d.id);
+              tagAsDriver(d.id);
+            }}
             style={{
               padding: "18px 0",
               borderRadius: 12,
