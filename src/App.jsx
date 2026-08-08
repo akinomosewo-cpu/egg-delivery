@@ -460,7 +460,7 @@ export default function App() {
     <div
       style={{
         minHeight: "100vh",
-        background: T.paper,
+        background: "transparent",
         fontFamily: "'Helvetica Neue', 'Segoe UI', Arial, system-ui, sans-serif",
         letterSpacing: "-0.01em",
         color: T.ink,

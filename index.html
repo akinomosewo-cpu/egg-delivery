@@ -7,7 +7,20 @@
     <title>egg-delivery</title>
   </head>
   <body>
-    <div id="root"></div>
+    <!-- Persistent translucent wallpaper — sits behind every screen, all the time -->
+    <div style="
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      background: #FAFAF8 url('/splash-full.png') repeat;
+      background-size: 140px 140px;
+      opacity: 0.07;
+    "></div>
+
+    <div id="root" style="position: relative; z-index: 1;"></div>
+
+    <!-- One-time boot splash — shown briefly while the app loads, then fades out -->
     <div id="boot-splash" style="
       position: fixed;
       inset: 0;
