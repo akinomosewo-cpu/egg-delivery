@@ -8,6 +8,39 @@
   </head>
   <body>
     <div id="root"></div>
+    <div id="boot-splash" style="
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: #A3CC52 url('/splash-full.png') center center / cover no-repeat;
+      display: flex;
+    "></div>
+    <script>
+      (function () {
+        var removed = false;
+        function remove() {
+          if (removed) return;
+          var el = document.getElementById('boot-splash');
+          if (el) {
+            el.style.transition = 'opacity 0.25s ease';
+            el.style.opacity = '0';
+            setTimeout(function () { el.remove(); }, 250);
+          }
+          removed = true;
+        }
+        var root = document.getElementById('root');
+        if (root) {
+          var observer = new MutationObserver(function () {
+            if (root.childNodes.length > 0) {
+              remove();
+              observer.disconnect();
+            }
+          });
+          observer.observe(root, { childList: true });
+        }
+        setTimeout(remove, 3000);
+      })();
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

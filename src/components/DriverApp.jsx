@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { T, Btn, Tag, NumInput, MediaCapture, SignaturePad, fmtQty } from "./ui";
 import { uploadPhoto } from "../supabase";
 import { tagAsDriver } from "../notifications";
@@ -60,6 +60,15 @@ export default function DriverApp({
   const [collectAmount, setCollectAmount] = useState("");
   const [collectPhoto, setCollectPhoto] = useState(null);
 
+  // Keep a stable reference to updateDriverLocation — App.jsx redefines this
+  // function on every render (including its own 5-second polling refresh),
+  // so putting it directly in the effect below would tear down and restart
+  // the location watch constantly, causing repeated permission prompts.
+  const updateDriverLocationRef = useRef(updateDriverLocation);
+  useEffect(() => {
+    updateDriverLocationRef.current = updateDriverLocation;
+  }, [updateDriverLocation]);
+
   // Quietly report this driver's live position while they're logged in —
   // only works while this screen is open and the phone is unlocked.
   useEffect(() => {
@@ -72,7 +81,7 @@ export default function DriverApp({
         lastSent = now;
         const { latitude, longitude } = pos.coords;
         if (isInNigeria(latitude, longitude)) {
-          updateDriverLocation(driverId, latitude, longitude);
+          updateDriverLocationRef.current(driverId, latitude, longitude);
         } else {
           console.warn("Ignoring implausible location:", latitude, longitude);
         }
@@ -81,7 +90,7 @@ export default function DriverApp({
       { enableHighAccuracy: false, maximumAge: 15000, timeout: 20000 }
     );
     return () => navigator.geolocation.clearWatch(watchId);
-  }, [driverId, updateDriverLocation]);
+  }, [driverId]);
 
 
   if (!driverId) {
