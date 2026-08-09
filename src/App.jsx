@@ -10,6 +10,7 @@ import AdminReports from "./components/AdminReports";
 import AdminMissingCrates from "./components/AdminMissingCrates";
 import AdminDayList from "./components/AdminDayList";
 import AdminMap from "./components/AdminMap";
+import AdminStock from "./components/AdminStock";
 import DriverApp from "./components/DriverApp";
 
 const ADMIN_PIN = "8791"; // change this to change the admin password
@@ -27,6 +28,8 @@ export default function App() {
   const [crateReturns, setCrateReturns] = useState([]);
   const [events, setEvents] = useState([]);
   const [openDebts, setOpenDebts] = useState([]); // crates owed by customers, not yet collected back
+  const [stockEntries, setStockEntries] = useState([]);
+  const [allDeliveriesForStock, setAllDeliveriesForStock] = useState([]);
   const [driverLocations, setDriverLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -37,7 +40,7 @@ export default function App() {
   // ---- Load everything for today ----
   const loadAll = useCallback(async () => {
     try {
-      const [drv, cus, hlp, del, ret, evt, debts, locs] = await Promise.all([
+      const [drv, cus, hlp, del, ret, evt, debts, locs, stock, allDel] = await Promise.all([
         supabase.from("drivers").select("*").eq("active", true).order("name"),
         supabase.from("customers").select("*").eq("active", true).order("name"),
         supabase.from("helpers").select("*").eq("active", true).order("name"),
@@ -46,8 +49,10 @@ export default function App() {
         supabase.from("delivery_events").select("*").order("event_date", { ascending: false }).order("created_at", { ascending: true }).limit(300),
         supabase.from("deliveries").select("*").gt("missing_crates", 0).eq("missing_crates_resolved", false).order("delivery_date"),
         supabase.from("driver_locations").select("*"),
+        supabase.from("stock_entries").select("*"),
+        supabase.from("deliveries").select("crates_assigned"), // all-time, for stock math — not date-filtered
       ]);
-      const firstError = drv.error || cus.error || hlp.error || del.error || ret.error || evt.error || debts.error || locs.error;
+      const firstError = drv.error || cus.error || hlp.error || del.error || ret.error || evt.error || debts.error || locs.error || stock.error || allDel.error;
       if (firstError) throw firstError;
       setDrivers(drv.data);
       setCustomers(cus.data);
@@ -57,6 +62,8 @@ export default function App() {
       setEvents(evt.data);
       setOpenDebts(debts.data);
       setDriverLocations(locs.data);
+      setStockEntries(stock.data);
+      setAllDeliveriesForStock(allDel.data);
       setError(null);
     } catch (e) {
       console.error(e);
@@ -391,6 +398,12 @@ export default function App() {
     await supabase.from("customers").update({ lat, lng }).eq("id", customerId);
   };
 
+  const addStockEntry = async (amount, note, driverId) => {
+    const { error } = await supabase.from("stock_entries").insert({ amount, note, driver_id: driverId || null });
+    if (error) alert("Could not save: " + error.message);
+    else loadAll();
+  };
+
   const addHelper = async (name) => {
     const { error } = await supabase.from("helpers").insert({ name });
     if (error) alert("Could not add: " + error.message);
@@ -642,6 +655,7 @@ export default function App() {
                 { key: "today", label: "Today" },
                 { key: "live", label: "Live" },
                 { key: "map", label: "Map" },
+                { key: "stock", label: "Stock" },
                 { key: "events", label: "Events" },
                 { key: "missing", label: "Missing" },
                 { key: "reports", label: "Reports" },
@@ -709,6 +723,10 @@ export default function App() {
                 deliveries={deliveries}
                 addDelivery={addDelivery}
                 removeDelivery={removeDelivery}
+                availableStock={
+                  stockEntries.reduce((s, e) => s + Number(e.amount || 0), 0) -
+                  allDeliveriesForStock.reduce((s, d) => s + Number(d.crates_assigned || 0), 0)
+                }
               />
             ) : adminTab === "live" ? (
               <AdminDashboard
@@ -722,6 +740,8 @@ export default function App() {
               <AdminEvents drivers={drivers} customers={customers} events={events} />
             ) : adminTab === "map" ? (
               <AdminMap drivers={drivers} customers={customers} driverLocations={driverLocations} deliveries={deliveries} geocodeCustomer={geocodeCustomer} />
+            ) : adminTab === "stock" ? (
+              <AdminStock stockEntries={stockEntries} deliveries={allDeliveriesForStock} addStockEntry={addStockEntry} drivers={drivers} />
             ) : adminTab === "today" ? (
               <AdminDayList drivers={drivers} customers={customers} helpers={helpers} deliveries={deliveries} />
             ) : adminTab === "missing" ? (
@@ -764,6 +784,11 @@ export default function App() {
             resolveMissingCrates={resolveMissingCrates}
             collectMissingCrates={collectMissingCrates}
             updateDriverLocation={updateDriverLocation}
+            addStockEntry={addStockEntry}
+            availableStock={
+              stockEntries.reduce((s, e) => s + Number(e.amount || 0), 0) -
+              allDeliveriesForStock.reduce((s, d) => s + Number(d.crates_assigned || 0), 0)
+            }
           />
         )}
       </div>
