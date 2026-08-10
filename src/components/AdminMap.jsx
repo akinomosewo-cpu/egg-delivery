@@ -123,9 +123,12 @@ export default function AdminMap({ drivers, customers, driverLocations, deliveri
       if (!drv) return;
       const minsAgo = Math.round((Date.now() - new Date(loc.updated_at)) / 60000);
       const isActive = activeDriverIds.has(drv.id);
+      const activePair = activePairs.find((p) => p.driver.id === drv.id);
+      const cachedRoute = activePair ? routeCacheRef.current[`${drv.id}:${activePair.customer.id}`] : null;
+      const etaLine = cachedRoute ? `<br/>~${cachedRoute.durationMin} min away (${cachedRoute.distanceKm} km)` : "";
       const marker = L.marker([loc.lat, loc.lng], { icon: isActive ? currentLocationIcon : idleDriverPin })
         .addTo(map)
-        .bindPopup(`<b>${drv.name}</b>${isActive ? " — on the way" : ""}<br/>Updated ${minsAgo < 1 ? "just now" : `${minsAgo} min ago`}`);
+        .bindPopup(`<b>${drv.name}</b>${isActive ? " — on the way" : ""}${etaLine}<br/>Updated ${minsAgo < 1 ? "just now" : `${minsAgo} min ago`}`);
       driverMarkersRef.current.push(marker);
     });
 
@@ -143,13 +146,13 @@ export default function AdminMap({ drivers, customers, driverLocations, deliveri
       const key = `${driver.id}:${customer.id}`;
       const cached = routeCacheRef.current[key];
       if (cached) {
-        const line = L.polyline(cached, { color: "#2A7DE1", weight: 5, opacity: 0.85 }).addTo(map);
+        const line = L.polyline(cached.points, { color: "#2A7DE1", weight: 5, opacity: 0.85 }).addTo(map);
         routeLinesRef.current.push(line);
       } else {
         getRoute({ lat: loc.lat, lng: loc.lng }, { lat: customer.lat, lng: customer.lng })
-          .then((points) => {
-            if (points) {
-              routeCacheRef.current[key] = points;
+          .then((route) => {
+            if (route) {
+              routeCacheRef.current[key] = route;
               forceRedraw((n) => n + 1); // trigger a redraw now that the route is cached
             }
           })

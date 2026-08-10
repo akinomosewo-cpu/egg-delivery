@@ -748,6 +748,7 @@ export default function App() {
                 helpers={helpers}
                 deliveries={deliveries}
                 crateReturns={crateReturns}
+                driverLocations={driverLocations}
               />
             ) : adminTab === "events" ? (
               <AdminEvents drivers={drivers} customers={customers} events={events} />

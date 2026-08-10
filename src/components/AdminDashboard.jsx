@@ -1,10 +1,120 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import "leaflet/dist/leaflet.css";
+import L from "leaflet";
 import { T, Tag, fmtQty, fmtDateTime } from "./ui";
+import { getRoute } from "../routing";
+
+const pin = (color) =>
+  L.divIcon({
+    className: "",
+    html: `<div style="width:16px;height:16px;border-radius:50% 50% 50% 0;background:${color};border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.4);transform:rotate(-45deg)"></div>`,
+    iconSize: [16, 16],
+    iconAnchor: [8, 16],
+  });
+const currentLocationIcon = L.divIcon({
+  className: "",
+  html: `<div style="width:16px;height:16px;border-radius:50%;background:#2A7DE1;border:3px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,0.5)"></div>`,
+  iconSize: [16, 16],
+  iconAnchor: [8, 8],
+});
+const idleDriverPin = pin("#4E8A00");
+const customerPin = pin("#111111");
+const ABUJA_CENTER = [9.0765, 7.3986];
+const STALE_MINUTES = 20;
 
 const money = (n) => `₦${Number(n || 0).toLocaleString("en-NG")}`;
 
-export default function AdminDashboard({ drivers, customers, helpers, deliveries, crateReturns }) {
+export default function AdminDashboard({ drivers, customers, helpers, deliveries, crateReturns, driverLocations }) {
   const [expandedId, setExpandedId] = useState(null);
+  const [, forceRedraw] = useState(0);
+  const mapRef = useRef(null);
+  const leafletMapRef = useRef(null);
+  const markersRef = useRef([]);
+  const routeLinesRef = useRef([]);
+  const routeCacheRef = useRef({});
+  const lastFitCountRef = useRef(0);
+
+  // Which delivery each driver is currently actively working on (in_transit or arrived) — this is what gets a route line + ETA
+  const activePairs = drivers
+    .map((drv) => {
+      const loc = driverLocations?.find((l) => l.driver_id === drv.id);
+      const delivery = deliveries.find((d) => d.driver_id === drv.id && (d.status === "in_transit" || d.status === "arrived"));
+      if (!loc || !delivery) return null;
+      const customer = customers.find((c) => c.id === delivery.customer_id);
+      if (!customer || customer.lat == null || customer.lng == null) return null;
+      return { driver: drv, loc, customer };
+    })
+    .filter(Boolean);
+
+  useEffect(() => {
+    if (leafletMapRef.current || !mapRef.current) return;
+    const map = L.map(mapRef.current, { zoomControl: false }).setView(ABUJA_CENTER, 12);
+    L.control.zoom({ position: "bottomright" }).addTo(map);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "© OpenStreetMap contributors",
+      maxZoom: 19,
+    }).addTo(map);
+    leafletMapRef.current = map;
+    return () => {
+      map.remove();
+      leafletMapRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = leafletMapRef.current;
+    if (!map) return;
+
+    markersRef.current.forEach((m) => map.removeLayer(m));
+    markersRef.current = [];
+    routeLinesRef.current.forEach((l) => map.removeLayer(l));
+    routeLinesRef.current = [];
+
+    const todaysCustomerIds = new Set(deliveries.map((d) => d.customer_id));
+    const todaysDriverIds = new Set(deliveries.filter((d) => d.driver_id).map((d) => d.driver_id));
+    const activeDriverIds = new Set(activePairs.map((p) => p.driver.id));
+
+    (driverLocations || []).forEach((loc) => {
+      if (!todaysDriverIds.has(loc.driver_id)) return;
+      const drv = drivers.find((d) => d.id === loc.driver_id);
+      if (!drv) return;
+      const isActive = activeDriverIds.has(drv.id);
+      const marker = L.marker([loc.lat, loc.lng], { icon: isActive ? currentLocationIcon : idleDriverPin })
+        .addTo(map)
+        .bindPopup(`<b>${drv.name}</b>${isActive ? " — on the way" : ""}`);
+      markersRef.current.push(marker);
+    });
+
+    customers.forEach((c) => {
+      if (!todaysCustomerIds.has(c.id) || c.lat == null || c.lng == null) return;
+      const marker = L.marker([c.lat, c.lng], { icon: customerPin }).addTo(map).bindPopup(`<b>${c.name}</b>`);
+      markersRef.current.push(marker);
+    });
+
+    activePairs.forEach(({ driver, loc, customer }) => {
+      const key = `${driver.id}:${customer.id}`;
+      const cached = routeCacheRef.current[key];
+      if (cached) {
+        const line = L.polyline(cached.points, { color: "#2A7DE1", weight: 4, opacity: 0.8 }).addTo(map);
+        routeLinesRef.current.push(line);
+      } else {
+        getRoute({ lat: loc.lat, lng: loc.lng }, { lat: customer.lat, lng: customer.lng })
+          .then((route) => {
+            if (route) {
+              routeCacheRef.current[key] = route;
+              forceRedraw((n) => n + 1); // redraw now that the route is cached
+            }
+          })
+          .catch((e) => console.error("Route lookup failed:", e));
+      }
+    });
+
+    if (markersRef.current.length > 0 && markersRef.current.length !== lastFitCountRef.current) {
+      const group = L.featureGroup(markersRef.current);
+      map.fitBounds(group.getBounds().pad(0.3), { maxZoom: 15 });
+      lastFitCountRef.current = markersRef.current.length;
+    }
+  }, [driverLocations, drivers, customers, deliveries]);
 
   const todaysRevenue = deliveries
     .filter((d) => d.status === "delivered")
@@ -26,6 +136,20 @@ export default function AdminDashboard({ drivers, customers, helpers, deliveries
         <span style={{ fontSize: 13, fontWeight: 700, color: T.green }}>
           Live — updates as drivers work
         </span>
+      </div>
+
+      <div
+        ref={mapRef}
+        style={{
+          width: "100%",
+          height: 220,
+          borderRadius: 12,
+          border: `1.5px solid ${T.line}`,
+          overflow: "hidden",
+        }}
+      />
+      <div style={{ fontSize: 11, color: T.mute, textAlign: "center", marginTop: -10 }}>
+        🟢 Idle driver · 🔵 On the way · ⚫ Customer
       </div>
 
       <div
@@ -66,7 +190,11 @@ export default function AdminDashboard({ drivers, customers, helpers, deliveries
       {drivers.map((drv) => {
         const list = deliveries.filter((d) => d.driver_id === drv.id);
         const done = list.filter((d) => d.status === "delivered");
+        const pending = list.filter((d) => d.status !== "delivered");
         const ret = crateReturns.find((r) => r.driver_id === drv.id);
+        const loc = driverLocations?.find((l) => l.driver_id === drv.id);
+        const staleMin = loc ? Math.round((Date.now() - new Date(loc.updated_at)) / 60000) : null;
+        const isStale = pending.length > 0 && (staleMin === null || staleMin > STALE_MINUTES);
         if (list.length === 0 && !ret) return null;
         return (
           <div
@@ -84,9 +212,16 @@ export default function AdminDashboard({ drivers, customers, helpers, deliveries
               }}
             >
               <span style={{ fontWeight: 800, fontSize: 15 }}>{drv.name}</span>
-              <span style={{ fontSize: 13, fontWeight: 700, color: T.mute }}>
-                {done.length}/{list.length} stops done
-              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {isStale && (
+                  <Tag color={T.red} bg="#FBEAE6">
+                    📡 {staleMin === null ? "No signal yet" : `Quiet ${staleMin}m`}
+                  </Tag>
+                )}
+                <span style={{ fontSize: 13, fontWeight: 700, color: T.mute }}>
+                  {done.length}/{list.length} stops done
+                </span>
+              </div>
             </div>
 
             {list.map((d) => {
@@ -97,6 +232,7 @@ export default function AdminDashboard({ drivers, customers, helpers, deliveries
               const isOpen = expandedId === d.id;
               const isPartial = d.status !== "delivered" && (d.crates_delivered || 0) > 0 && (d.crates_delivered || 0) < d.crates_assigned;
               const helperNames = (d.helper_ids || []).map((id) => (helpers.find((h) => h.id === id) || {}).name).filter(Boolean);
+              const routeInfo = d.status === "in_transit" ? routeCacheRef.current[`${drv.id}:${d.customer_id}`] : null;
               const sizes = [
                 ["Big large", d.big_large_delivered],
                 ["Small large", d.small_large_delivered],
@@ -127,7 +263,7 @@ export default function AdminDashboard({ drivers, customers, helpers, deliveries
                         </Tag>
                       ) : d.status === "in_transit" ? (
                         <Tag color={T.yolkDark} bg={T.tan}>
-                          On the way
+                          On the way{routeInfo ? ` · ~${routeInfo.durationMin}m` : ""}
                         </Tag>
                       ) : (
                         <Tag color={T.mute} bg={T.tan}>
