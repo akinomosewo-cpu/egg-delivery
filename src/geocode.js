@@ -10,6 +10,14 @@ async function tryGeocode(query, limit = 1) {
   return data || [];
 }
 
+// Rough Nigeria bounding box — used to sanity-check a driver's raw GPS
+// reading before sending it to the server, so a device reporting from
+// somewhere obviously wrong (like testing from another continent) doesn't
+// get treated as a real position.
+export function isInNigeria(lat, lng) {
+  return lat > 4 && lat < 14 && lng > 2.5 && lng < 15;
+}
+
 // Turns a text address into map coordinates (lat/lng) using OpenStreetMap's
 // free Nominatim service. No API key needed. Their usage policy asks for a
 // custom identifier and no more than ~1 request/second, which is fine for
