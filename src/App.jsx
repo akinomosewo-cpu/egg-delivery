@@ -31,6 +31,7 @@ export default function App() {
   const [openDebts, setOpenDebts] = useState([]); // crates owed by customers, not yet collected back
   const [stockEntries, setStockEntries] = useState([]);
   const [allDeliveriesForStock, setAllDeliveriesForStock] = useState([]);
+  const [stockCounts, setStockCounts] = useState([]);
   const [driverLocations, setDriverLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -41,7 +42,7 @@ export default function App() {
   // ---- Load everything for today ----
   const loadAll = useCallback(async () => {
     try {
-      const [drv, cus, hlp, del, ret, evt, debts, locs, stock, allDel] = await Promise.all([
+      const [drv, cus, hlp, del, ret, evt, debts, locs, stock, allDel, counts] = await Promise.all([
         supabase.from("drivers").select("*").eq("active", true).order("name"),
         supabase.from("customers").select("*").eq("active", true).order("name"),
         supabase.from("helpers").select("*").eq("active", true).order("name"),
@@ -52,8 +53,9 @@ export default function App() {
         supabase.from("driver_locations").select("*"),
         supabase.from("stock_entries").select("*"),
         supabase.from("deliveries").select("crates_assigned"), // all-time, for stock math — not date-filtered
+        supabase.from("stock_counts").select("*").order("created_at", { ascending: false }).limit(50),
       ]);
-      const firstError = drv.error || cus.error || hlp.error || del.error || ret.error || evt.error || debts.error || locs.error || stock.error || allDel.error;
+      const firstError = drv.error || cus.error || hlp.error || del.error || ret.error || evt.error || debts.error || locs.error || stock.error || allDel.error || counts.error;
       if (firstError) throw firstError;
       setDrivers(drv.data);
       setCustomers(cus.data);
@@ -65,6 +67,7 @@ export default function App() {
       setDriverLocations(locs.data);
       setStockEntries(stock.data);
       setAllDeliveriesForStock(allDel.data);
+      setStockCounts(counts.data);
       setError(null);
     } catch (e) {
       console.error(e);
@@ -401,6 +404,14 @@ export default function App() {
 
   const addStockEntry = async (amount, note, driverId) => {
     const { error } = await supabase.from("stock_entries").insert({ amount, note, driver_id: driverId || null });
+    if (error) alert("Could not save: " + error.message);
+    else loadAll();
+  };
+
+  // A driver's morning warehouse count — just a reference reading, doesn't
+  // feed into the stock math itself.
+  const addStockCount = async (driverId, amount) => {
+    const { error } = await supabase.from("stock_counts").insert({ driver_id: driverId, amount });
     if (error) alert("Could not save: " + error.message);
     else loadAll();
   };
@@ -743,7 +754,7 @@ export default function App() {
             ) : adminTab === "map" ? (
               <AdminMap drivers={drivers} customers={customers} driverLocations={driverLocations} deliveries={deliveries} geocodeCustomer={geocodeCustomer} />
             ) : adminTab === "stock" ? (
-              <AdminStock stockEntries={stockEntries} deliveries={allDeliveriesForStock} addStockEntry={addStockEntry} drivers={drivers} />
+              <AdminStock stockEntries={stockEntries} deliveries={allDeliveriesForStock} addStockEntry={addStockEntry} drivers={drivers} stockCounts={stockCounts} />
             ) : adminTab === "log" ? (
               <ActivityLogTable events={events} drivers={drivers} customers={customers} showAccount={true} />
             ) : adminTab === "today" ? (
@@ -788,7 +799,7 @@ export default function App() {
             resolveMissingCrates={resolveMissingCrates}
             collectMissingCrates={collectMissingCrates}
             updateDriverLocation={updateDriverLocation}
-            addStockEntry={addStockEntry}
+            addStockCount={addStockCount}
             events={events}
             availableStock={
               stockEntries.reduce((s, e) => s + Number(e.amount || 0), 0) -

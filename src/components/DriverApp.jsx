@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { T, Btn, Tag, NumInput, TextInput, MediaCapture, SignaturePad, fmtQty } from "./ui";
+import { T, Btn, Tag, NumInput, MediaCapture, SignaturePad, fmtQty } from "./ui";
 import ActivityLogTable from "./ActivityLogTable";
 import { uploadPhoto } from "../supabase";
 import { tagAsDriver } from "../notifications";
@@ -39,7 +39,7 @@ export default function DriverApp({
   resolveMissingCrates,
   collectMissingCrates,
   updateDriverLocation,
-  addStockEntry,
+  addStockCount,
   availableStock,
   events,
 }) {
@@ -64,7 +64,6 @@ export default function DriverApp({
   const [collectAmount, setCollectAmount] = useState("");
   const [collectPhoto, setCollectPhoto] = useState(null);
   const [stockAmount, setStockAmount] = useState("");
-  const [stockNote, setStockNote] = useState("");
   const [stockBusy, setStockBusy] = useState(false);
 
   // Keep a stable reference to updateDriverLocation — App.jsx redefines this
@@ -768,19 +767,14 @@ export default function DriverApp({
         );
       })()}
 
-      {/* Log stock collected from the farm */}
+      {/* Morning warehouse count */}
       <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 14 }}>
-        <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>Log stock collected</div>
-        {typeof availableStock === "number" && (
-          <div style={{ fontSize: 12, color: T.mute, marginBottom: 10 }}>
-            {availableStock} crates currently in stock
-          </div>
-        )}
-        <div style={{ marginBottom: 10 }}>
-          <NumInput label="Crates collected" value={stockAmount} onChange={setStockAmount} width={120} />
+        <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>Report this morning's warehouse count</div>
+        <div style={{ fontSize: 12, color: T.mute, marginBottom: 10 }}>
+          How many crates do you see in the warehouse right now, before deliveries go out?
         </div>
         <div style={{ marginBottom: 12 }}>
-          <TextInput label="Note (optional)" value={stockNote} onChange={setStockNote} placeholder="e.g. Morning collection" />
+          <NumInput label="Crates in warehouse" value={stockAmount} onChange={setStockAmount} width={140} />
         </div>
         <Btn
           small
@@ -788,14 +782,13 @@ export default function DriverApp({
           onClick={async () => {
             if (!stockAmount || Number(stockAmount) <= 0) return;
             setStockBusy(true);
-            await addStockEntry(Number(stockAmount), stockNote.trim() || null, driverId);
+            await addStockCount(driverId, Number(stockAmount));
             setStockBusy(false);
             setStockAmount("");
-            setStockNote("");
           }}
           disabled={stockBusy || !stockAmount || Number(stockAmount) <= 0}
         >
-          {stockBusy ? "Saving…" : "Add to stock"}
+          {stockBusy ? "Saving…" : "Submit count"}
         </Btn>
       </div>
 

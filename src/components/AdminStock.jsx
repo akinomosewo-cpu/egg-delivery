@@ -4,7 +4,7 @@ import { T, Btn, NumInput, TextInput } from "./ui";
 // Available stock is computed live: everything ever logged as "added",
 // minus every crate ever committed to a posted delivery. Nothing to get
 // out of sync — no manual increment/decrement bookkeeping anywhere.
-export default function AdminStock({ stockEntries, deliveries, addStockEntry, drivers }) {
+export default function AdminStock({ stockEntries, deliveries, addStockEntry, drivers, stockCounts }) {
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -84,6 +84,32 @@ export default function AdminStock({ stockEntries, deliveries, addStockEntry, dr
       <div style={{ fontSize: 11, color: T.mute, textAlign: "center" }}>
         This is a running total across all time, not reset daily. Posting a delivery counts against it the moment it's created.
       </div>
+
+      {stockCounts && stockCounts.length > 0 && (
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: T.mute, marginBottom: 8 }}>
+            Morning counts reported by drivers
+          </div>
+          <div style={{ fontSize: 11, color: T.mute, marginBottom: 8 }}>
+            What drivers physically saw in the warehouse — a reference to compare against the computed number above, not part of the running total.
+          </div>
+          <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, overflow: "hidden" }}>
+            {stockCounts.slice(0, 15).map((c) => (
+              <div key={c.id} style={{ padding: "10px 14px", borderBottom: `1px solid ${T.line}`, display: "flex", justifyContent: "space-between" }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{c.amount} crates</div>
+                  <div style={{ fontSize: 12, color: T.mute }}>
+                    {(drivers.find((d) => d.id === c.driver_id) || {}).name || "A driver"}
+                  </div>
+                </div>
+                <div style={{ fontSize: 12, color: T.mute }}>
+                  {new Date(c.created_at).toLocaleString("en-NG", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
