@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
-import { geocodeAddress } from "../geocode";
+import { geocodeAddress, searchPlaces } from "../geocode";
 import { getRoute } from "../routing";
 import { T, Btn } from "./ui";
 
@@ -43,8 +43,31 @@ export default function AdminMap({ drivers, customers, driverLocations, deliveri
   const [searchText, setSearchText] = useState("");
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState(null);
+  const [searchResults, setSearchResults] = useState(null);
   const [, forceRedraw] = useState(0); // bumped once a route finishes loading async
   const [placingId, setPlacingId] = useState(null);
+  const [coordInputs, setCoordInputs] = useState({});
+  const [coordErrors, setCoordErrors] = useState({});
+
+  const submitCoordInput = (customerId) => {
+    const raw = (coordInputs[customerId] || "").trim();
+    // Accepts "9.0765, 7.3986" or "9.0765,7.3986" — the exact format Google Maps copies
+    const match = raw.match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
+    if (!match) {
+      setCoordErrors((prev) => ({ ...prev, [customerId]: "Format should be: latitude, longitude" }));
+      return;
+    }
+    const lat = parseFloat(match[1]);
+    const lng = parseFloat(match[2]);
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      setCoordErrors((prev) => ({ ...prev, [customerId]: "Those numbers don't look like valid coordinates" }));
+      return;
+    }
+    setCoordErrors((prev) => ({ ...prev, [customerId]: null }));
+    geocodeCustomer(customerId, lat, lng);
+    setCoordInputs((prev) => ({ ...prev, [customerId]: "" }));
+  };
+
   const placingIdRef = useRef(null);
   useEffect(() => {
     placingIdRef.current = placingId;
@@ -202,25 +225,31 @@ export default function AdminMap({ drivers, customers, driverLocations, deliveri
     if (!searchText.trim()) return;
     setSearching(true);
     setSearchError(null);
+    setSearchResults(null);
     try {
-      const result = await geocodeAddress(searchText.trim(), { restrictToAbuja: false });
-      const map = leafletMapRef.current;
-      if (!result) {
+      const results = await searchPlaces(searchText.trim());
+      if (results.length === 0) {
         setSearchError("Couldn't find that place.");
         return;
       }
-      if (searchMarkerRef.current) map.removeLayer(searchMarkerRef.current);
-      const marker = L.marker([result.lat, result.lng], { icon: searchPin })
-        .addTo(map)
-        .bindPopup(result.label || searchText)
-        .openPopup();
-      searchMarkerRef.current = marker;
-      map.flyTo([result.lat, result.lng], 15);
+      setSearchResults(results);
     } catch (e) {
       setSearchError("Search failed — check your connection and try again.");
     } finally {
       setSearching(false);
     }
+  };
+
+  const pickSearchResult = (result) => {
+    const map = leafletMapRef.current;
+    if (searchMarkerRef.current) map.removeLayer(searchMarkerRef.current);
+    const marker = L.marker([result.lat, result.lng], { icon: searchPin })
+      .addTo(map)
+      .bindPopup(result.label)
+      .openPopup();
+    searchMarkerRef.current = marker;
+    map.flyTo([result.lat, result.lng], 15);
+    setSearchResults(null);
   };
 
   const activeDrivers = driverLocations.filter((loc) => Date.now() - new Date(loc.updated_at) < 30 * 60000);
@@ -276,17 +305,43 @@ export default function AdminMap({ drivers, customers, driverLocations, deliveri
             <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
               Not on the map yet ({notOnMap.length}) — the automatic lookup doesn't always find a match, so you can drop the pin yourself instead:
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ fontSize: 11, color: T.mute, marginBottom: 10 }}>
+              Tip: in Google Maps, long-press a spot and tap the coordinates shown to copy them — then paste below.
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {notOnMap.map((c) => (
-                <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</span>
-                  <Btn
-                    small
-                    kind={placingId === c.id ? "green" : "ghost"}
-                    onClick={() => setPlacingId(placingId === c.id ? null : c.id)}
-                  >
-                    {placingId === c.id ? "Tap the map…" : "📍 Place manually"}
-                  </Btn>
+                <div key={c.id} style={{ display: "flex", flexDirection: "column", gap: 6, paddingBottom: 8, borderBottom: `1px solid ${T.line}` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</span>
+                    <Btn
+                      small
+                      kind={placingId === c.id ? "green" : "ghost"}
+                      onClick={() => setPlacingId(placingId === c.id ? null : c.id)}
+                    >
+                      {placingId === c.id ? "Tap the map…" : "📍 Place manually"}
+                    </Btn>
+                  </div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <input
+                      value={coordInputs[c.id] || ""}
+                      onChange={(e) => setCoordInputs((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                      placeholder="9.0765, 7.3986"
+                      style={{
+                        flex: 1,
+                        padding: "7px 10px",
+                        fontSize: 12,
+                        border: `1.5px solid ${T.line}`,
+                        borderRadius: 6,
+                        fontFamily: "inherit",
+                        color: T.ink,
+                        background: "#fff",
+                      }}
+                    />
+                    <Btn small kind="ghost" onClick={() => submitCoordInput(c.id)}>
+                      Save
+                    </Btn>
+                  </div>
+                  {coordErrors[c.id] && <div style={{ fontSize: 11, color: T.red }}>{coordErrors[c.id]}</div>}
                 </div>
               ))}
             </div>
