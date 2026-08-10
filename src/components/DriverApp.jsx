@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { T, Btn, Tag, NumInput, TextInput, MediaCapture, SignaturePad, fmtQty } from "./ui";
+import ActivityLogTable from "./ActivityLogTable";
 import { uploadPhoto } from "../supabase";
 import { tagAsDriver } from "../notifications";
 import { isInNigeria } from "../geocode";
@@ -40,6 +41,7 @@ export default function DriverApp({
   updateDriverLocation,
   addStockEntry,
   availableStock,
+  events,
 }) {
   const [driverId, setDriverId] = useState(null);
   const [claimingId, setClaimingId] = useState(null);
@@ -795,6 +797,17 @@ export default function DriverApp({
         >
           {stockBusy ? "Saving…" : "Add to stock"}
         </Btn>
+      </div>
+
+      {/* My activity */}
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: T.mute, marginBottom: 8 }}>My activity</div>
+        <ActivityLogTable
+          events={(events || []).filter((e) => e.driver_id === driverId)}
+          drivers={drivers}
+          customers={customers}
+          showAccount={false}
+        />
       </div>
     </div>
   );

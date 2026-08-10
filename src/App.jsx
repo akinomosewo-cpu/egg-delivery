@@ -11,6 +11,7 @@ import AdminMissingCrates from "./components/AdminMissingCrates";
 import AdminDayList from "./components/AdminDayList";
 import AdminMap from "./components/AdminMap";
 import AdminStock from "./components/AdminStock";
+import ActivityLogTable from "./components/ActivityLogTable";
 import DriverApp from "./components/DriverApp";
 
 const ADMIN_PIN = "8791"; // change this to change the admin password
@@ -656,6 +657,7 @@ export default function App() {
                 { key: "live", label: "Live" },
                 { key: "map", label: "Map" },
                 { key: "stock", label: "Stock" },
+                { key: "log", label: "Log" },
                 { key: "events", label: "Events" },
                 { key: "missing", label: "Missing" },
                 { key: "reports", label: "Reports" },
@@ -742,6 +744,8 @@ export default function App() {
               <AdminMap drivers={drivers} customers={customers} driverLocations={driverLocations} deliveries={deliveries} geocodeCustomer={geocodeCustomer} />
             ) : adminTab === "stock" ? (
               <AdminStock stockEntries={stockEntries} deliveries={allDeliveriesForStock} addStockEntry={addStockEntry} drivers={drivers} />
+            ) : adminTab === "log" ? (
+              <ActivityLogTable events={events} drivers={drivers} customers={customers} showAccount={true} />
             ) : adminTab === "today" ? (
               <AdminDayList drivers={drivers} customers={customers} helpers={helpers} deliveries={deliveries} />
             ) : adminTab === "missing" ? (
@@ -785,6 +789,7 @@ export default function App() {
             collectMissingCrates={collectMissingCrates}
             updateDriverLocation={updateDriverLocation}
             addStockEntry={addStockEntry}
+            events={events}
             availableStock={
               stockEntries.reduce((s, e) => s + Number(e.amount || 0), 0) -
               allDeliveriesForStock.reduce((s, d) => s + Number(d.crates_assigned || 0), 0)
