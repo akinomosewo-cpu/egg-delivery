@@ -46,6 +46,7 @@ export default function AdminMap({ drivers, customers, driverLocations, deliveri
   const [searchResults, setSearchResults] = useState(null);
   const [, forceRedraw] = useState(0); // bumped once a route finishes loading async
   const [placingId, setPlacingId] = useState(null);
+  const [showManagePins, setShowManagePins] = useState(false);
   const [coordInputs, setCoordInputs] = useState({});
   const [coordErrors, setCoordErrors] = useState({});
 
@@ -345,6 +346,42 @@ export default function AdminMap({ drivers, customers, driverLocations, deliveri
                 </div>
               ))}
             </div>
+          </div>
+        );
+      })()}
+
+      {(() => {
+        const placed = customers.filter((c) => c.lat != null && c.lng != null);
+        if (placed.length === 0) return null;
+        return (
+          <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 10, padding: 12 }}>
+            <button
+              onClick={() => setShowManagePins((v) => !v)}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                fontFamily: "inherit",
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              {showManagePins ? "▲" : "▼"} Manage pins ({placed.length} placed) — reset one if it's wrong
+            </button>
+            {showManagePins && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
+                {placed.map((c) => (
+                  <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</span>
+                    <Btn small kind="ghost" onClick={() => geocodeCustomer(c.id, null, null)}>
+                      Reset
+                    </Btn>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         );
       })()}
