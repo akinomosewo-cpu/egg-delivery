@@ -12,6 +12,7 @@ import AdminDayList from "./components/AdminDayList";
 import AdminMap from "./components/AdminMap";
 import AdminStock from "./components/AdminStock";
 import ActivityLogTable from "./components/ActivityLogTable";
+import AdminBalances from "./components/AdminBalances";
 import DriverApp from "./components/DriverApp";
 
 const ADMIN_PIN = "8791"; // change this to change the admin password
@@ -52,7 +53,7 @@ export default function App() {
         supabase.from("deliveries").select("*").gt("missing_crates", 0).eq("missing_crates_resolved", false).order("delivery_date"),
         supabase.from("driver_locations").select("*"),
         supabase.from("stock_entries").select("*"),
-        supabase.from("deliveries").select("crates_assigned"), // all-time, for stock math — not date-filtered
+        supabase.from("deliveries").select("customer_id, crates_assigned, price_due, payment_collected, missing_crates, missing_crates_resolved, delivery_date"), // all-time — used for stock math and customer balances
         supabase.from("stock_counts").select("*").order("created_at", { ascending: false }).limit(50),
       ]);
       const firstError = drv.error || cus.error || hlp.error || del.error || ret.error || evt.error || debts.error || locs.error || stock.error || allDel.error || counts.error;
@@ -669,6 +670,7 @@ export default function App() {
                 { key: "map", label: "Map" },
                 { key: "stock", label: "Stock" },
                 { key: "log", label: "Log" },
+                { key: "balances", label: "Balances" },
                 { key: "events", label: "Events" },
                 { key: "missing", label: "Missing" },
                 { key: "reports", label: "Reports" },
@@ -758,6 +760,8 @@ export default function App() {
               <AdminStock stockEntries={stockEntries} deliveries={allDeliveriesForStock} addStockEntry={addStockEntry} drivers={drivers} stockCounts={stockCounts} />
             ) : adminTab === "log" ? (
               <ActivityLogTable events={events} drivers={drivers} customers={customers} showAccount={true} />
+            ) : adminTab === "balances" ? (
+              <AdminBalances customers={customers} allDeliveries={allDeliveriesForStock} />
             ) : adminTab === "today" ? (
               <AdminDayList drivers={drivers} customers={customers} helpers={helpers} deliveries={deliveries} />
             ) : adminTab === "missing" ? (
