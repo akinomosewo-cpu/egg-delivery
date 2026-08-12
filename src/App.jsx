@@ -409,9 +409,9 @@ export default function App() {
   };
 
   // A driver's morning warehouse count — just a reference reading, doesn't
-  // feed into the stock math itself.
-  const addStockCount = async (driverId, amount) => {
-    const { error } = await supabase.from("stock_counts").insert({ driver_id: driverId, amount });
+  // feed into the stock math itself. Shared once-a-day across all drivers.
+  const addStockCount = async (driverId, amount, photoUrl) => {
+    const { error } = await supabase.from("stock_counts").insert({ driver_id: driverId, amount, photo_url: photoUrl || null });
     if (error) alert("Could not save: " + error.message);
     else loadAll();
   };
@@ -801,7 +801,7 @@ export default function App() {
             collectMissingCrates={collectMissingCrates}
             updateDriverLocation={updateDriverLocation}
             addStockCount={addStockCount}
-            events={events}
+            stockCounts={stockCounts}
             availableStock={
               stockEntries.reduce((s, e) => s + Number(e.amount || 0), 0) -
               allDeliveriesForStock.reduce((s, d) => s + Number(d.crates_assigned || 0), 0)

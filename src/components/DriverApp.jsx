@@ -1,9 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { T, Btn, Tag, NumInput, MediaCapture, SignaturePad, fmtQty } from "./ui";
-import ActivityLogTable from "./ActivityLogTable";
 import { uploadPhoto } from "../supabase";
 import { tagAsDriver } from "../notifications";
-import { isInNigeria } from "../geocode";
 
 const sizesLine = (d) => {
   const parts = [
@@ -40,8 +38,8 @@ export default function DriverApp({
   collectMissingCrates,
   updateDriverLocation,
   addStockCount,
+  stockCounts,
   availableStock,
-  events,
 }) {
   const [driverId, setDriverId] = useState(null);
   const [claimingId, setClaimingId] = useState(null);
@@ -64,6 +62,7 @@ export default function DriverApp({
   const [collectAmount, setCollectAmount] = useState("");
   const [collectPhoto, setCollectPhoto] = useState(null);
   const [stockAmount, setStockAmount] = useState("");
+  const [stockPhoto, setStockPhoto] = useState(null);
   const [stockBusy, setStockBusy] = useState(false);
 
   // Keep a stable reference to updateDriverLocation — App.jsx redefines this
@@ -77,25 +76,28 @@ export default function DriverApp({
 
   // Quietly report this driver's live position while they're logged in —
   // only works while this screen is open and the phone is unlocked.
+  //
+  // Uses an active poll (ask for a fresh position every 20s) rather than
+  // watchPosition's continuous stream — on Android's WebView, watchPosition
+  // can silently stop delivering updates after the first reading (a known
+  // OS/battery-optimization quirk), leaving the pin frozen forever. Actively
+  // re-asking on a timer sidesteps that.
   useEffect(() => {
     if (!driverId || !("geolocation" in navigator)) return;
-    let lastSent = 0;
-    const watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        const now = Date.now();
-        if (now - lastSent < 20000) return; // at most once every 20s
-        lastSent = now;
-        const { latitude, longitude } = pos.coords;
-        if (isInNigeria(latitude, longitude)) {
-          updateDriverLocationRef.current(driverId, latitude, longitude);
-        } else {
-          console.warn("Ignoring implausible location:", latitude, longitude);
-        }
-      },
-      (err) => console.error("Location error:", err.message),
-      { enableHighAccuracy: false, maximumAge: 15000, timeout: 20000 }
-    );
-    return () => navigator.geolocation.clearWatch(watchId);
+
+    const poll = () => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          updateDriverLocationRef.current(driverId, pos.coords.latitude, pos.coords.longitude);
+        },
+        (err) => console.error("Location error:", err.message),
+        { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+      );
+    };
+
+    poll(); // fire immediately, don't wait for the first interval tick
+    const intervalId = setInterval(poll, 20000);
+    return () => clearInterval(intervalId);
   }, [driverId]);
 
 
@@ -767,41 +769,73 @@ export default function DriverApp({
         );
       })()}
 
-      {/* Morning warehouse count */}
-      <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 14 }}>
-        <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>Report this morning's warehouse count</div>
-        <div style={{ fontSize: 12, color: T.mute, marginBottom: 10 }}>
-          How many crates do you see in the warehouse right now, before deliveries go out?
-        </div>
-        <div style={{ marginBottom: 12 }}>
-          <NumInput label="Crates in warehouse" value={stockAmount} onChange={setStockAmount} width={140} />
-        </div>
-        <Btn
-          small
-          full
-          onClick={async () => {
-            if (!stockAmount || Number(stockAmount) <= 0) return;
-            setStockBusy(true);
-            await addStockCount(driverId, Number(stockAmount));
-            setStockBusy(false);
-            setStockAmount("");
-          }}
-          disabled={stockBusy || !stockAmount || Number(stockAmount) <= 0}
-        >
-          {stockBusy ? "Saving…" : "Submit count"}
-        </Btn>
-      </div>
-
-      {/* My activity */}
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 800, color: T.mute, marginBottom: 8 }}>My activity</div>
-        <ActivityLogTable
-          events={(events || []).filter((e) => e.driver_id === driverId)}
-          drivers={drivers}
-          customers={customers}
-          showAccount={false}
-        />
-      </div>
+      {/* Morning warehouse count — shared across all drivers, once per day */}
+      {(() => {
+        const todayStr = new Date().toLocaleDateString("en-CA");
+        const todayCount = (stockCounts || []).find((c) => c.work_date === todayStr);
+        if (todayCount) {
+          const who = (drivers.find((d) => d.id === todayCount.driver_id) || {}).name || "A driver";
+          return (
+            <div style={{ background: T.tan, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 14, opacity: 0.75 }}>
+              <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4, color: T.mute }}>
+                This morning's warehouse count — done ✓
+              </div>
+              <div style={{ fontSize: 13, color: T.mute }}>
+                {who} reported <b>{todayCount.amount} crates</b> at{" "}
+                {new Date(todayCount.created_at).toLocaleTimeString("en-NG", { hour: "2-digit", minute: "2-digit" })}
+              </div>
+              {todayCount.photo_url && (
+                <a href={todayCount.photo_url} target="_blank" rel="noreferrer">
+                  <img
+                    src={todayCount.photo_url}
+                    alt="warehouse proof"
+                    style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}`, marginTop: 8 }}
+                  />
+                </a>
+              )}
+            </div>
+          );
+        }
+        return (
+          <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 14 }}>
+            <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>Report this morning's warehouse count</div>
+            <div style={{ fontSize: 12, color: T.mute, marginBottom: 10 }}>
+              How many crates do you see in the warehouse right now, before deliveries go out? A photo is required as proof.
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <NumInput label="Crates in warehouse" value={stockAmount} onChange={setStockAmount} width={140} />
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <MediaCapture
+                photos={stockPhoto ? [stockPhoto] : []}
+                onAddPhoto={(url) => setStockPhoto(url)}
+                onRemovePhoto={() => setStockPhoto(null)}
+                video={null}
+                onSetVideo={() => {}}
+                onRemoveVideo={() => {}}
+                upload={uploadPhoto}
+                maxPhotos={1}
+                label="Photo proof (required)"
+              />
+            </div>
+            <Btn
+              small
+              full
+              onClick={async () => {
+                if (!stockAmount || Number(stockAmount) <= 0 || !stockPhoto) return;
+                setStockBusy(true);
+                await addStockCount(driverId, Number(stockAmount), stockPhoto);
+                setStockBusy(false);
+                setStockAmount("");
+                setStockPhoto(null);
+              }}
+              disabled={stockBusy || !stockAmount || Number(stockAmount) <= 0 || !stockPhoto}
+            >
+              {stockBusy ? "Saving…" : "Submit count"}
+            </Btn>
+          </div>
+        );
+      })()}
     </div>
   );
 }

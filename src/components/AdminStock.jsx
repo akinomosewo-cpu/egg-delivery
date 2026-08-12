@@ -95,14 +95,25 @@ export default function AdminStock({ stockEntries, deliveries, addStockEntry, dr
           </div>
           <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, overflow: "hidden" }}>
             {stockCounts.slice(0, 15).map((c) => (
-              <div key={c.id} style={{ padding: "10px 14px", borderBottom: `1px solid ${T.line}`, display: "flex", justifyContent: "space-between" }}>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 14 }}>{c.amount} crates</div>
-                  <div style={{ fontSize: 12, color: T.mute }}>
-                    {(drivers.find((d) => d.id === c.driver_id) || {}).name || "A driver"}
+              <div key={c.id} style={{ padding: "10px 14px", borderBottom: `1px solid ${T.line}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  {c.photo_url && (
+                    <a href={c.photo_url} target="_blank" rel="noreferrer">
+                      <img
+                        src={c.photo_url}
+                        alt="warehouse proof"
+                        style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 6, border: `1.5px solid ${T.line}` }}
+                      />
+                    </a>
+                  )}
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>{c.amount} crates</div>
+                    <div style={{ fontSize: 12, color: T.mute }}>
+                      {(drivers.find((d) => d.id === c.driver_id) || {}).name || "A driver"}
+                    </div>
                   </div>
                 </div>
-                <div style={{ fontSize: 12, color: T.mute }}>
+                <div style={{ fontSize: 12, color: T.mute, whiteSpace: "nowrap" }}>
                   {new Date(c.created_at).toLocaleString("en-NG", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
                 </div>
               </div>
