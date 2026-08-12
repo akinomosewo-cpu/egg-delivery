@@ -33,6 +33,7 @@ export default function App() {
   const [stockEntries, setStockEntries] = useState([]);
   const [allDeliveriesForStock, setAllDeliveriesForStock] = useState([]);
   const [stockCounts, setStockCounts] = useState([]);
+  const [customerPayments, setCustomerPayments] = useState([]);
   const [driverLocations, setDriverLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -43,7 +44,7 @@ export default function App() {
   // ---- Load everything for today ----
   const loadAll = useCallback(async () => {
     try {
-      const [drv, cus, hlp, del, ret, evt, debts, locs, stock, allDel, counts] = await Promise.all([
+      const [drv, cus, hlp, del, ret, evt, debts, locs, stock, allDel, counts, payments] = await Promise.all([
         supabase.from("drivers").select("*").eq("active", true).order("name"),
         supabase.from("customers").select("*").eq("active", true).order("name"),
         supabase.from("helpers").select("*").eq("active", true).order("name"),
@@ -55,8 +56,9 @@ export default function App() {
         supabase.from("stock_entries").select("*"),
         supabase.from("deliveries").select("customer_id, crates_assigned, price_due, payment_collected, missing_crates, missing_crates_resolved, delivery_date"), // all-time — used for stock math and customer balances
         supabase.from("stock_counts").select("*").order("created_at", { ascending: false }).limit(50),
+        supabase.from("customer_payments").select("*").order("created_at", { ascending: false }),
       ]);
-      const firstError = drv.error || cus.error || hlp.error || del.error || ret.error || evt.error || debts.error || locs.error || stock.error || allDel.error || counts.error;
+      const firstError = drv.error || cus.error || hlp.error || del.error || ret.error || evt.error || debts.error || locs.error || stock.error || allDel.error || counts.error || payments.error;
       if (firstError) throw firstError;
       setDrivers(drv.data);
       setCustomers(cus.data);
@@ -69,6 +71,7 @@ export default function App() {
       setStockEntries(stock.data);
       setAllDeliveriesForStock(allDel.data);
       setStockCounts(counts.data);
+      setCustomerPayments(payments.data);
       setError(null);
     } catch (e) {
       console.error(e);
@@ -411,6 +414,14 @@ export default function App() {
 
   // A driver's morning warehouse count — just a reference reading, doesn't
   // feed into the stock math itself. Shared once-a-day across all drivers.
+  // Records a payment a customer makes later, paying down their outstanding
+  // balance. Photo proof required.
+  const recordPayment = async (customerId, amount, photoUrl, note) => {
+    const { error } = await supabase.from("customer_payments").insert({ customer_id: customerId, amount, photo_url: photoUrl, note: note || null });
+    if (error) alert("Could not save: " + error.message);
+    else loadAll();
+  };
+
   const addStockCount = async (driverId, amount, photoUrl) => {
     const { error } = await supabase.from("stock_counts").insert({ driver_id: driverId, amount, photo_url: photoUrl || null });
     if (error) alert("Could not save: " + error.message);
@@ -761,7 +772,7 @@ export default function App() {
             ) : adminTab === "log" ? (
               <ActivityLogTable events={events} drivers={drivers} customers={customers} showAccount={true} />
             ) : adminTab === "balances" ? (
-              <AdminBalances customers={customers} allDeliveries={allDeliveriesForStock} />
+              <AdminBalances customers={customers} allDeliveries={allDeliveriesForStock} customerPayments={customerPayments} recordPayment={recordPayment} />
             ) : adminTab === "today" ? (
               <AdminDayList drivers={drivers} customers={customers} helpers={helpers} deliveries={deliveries} />
             ) : adminTab === "missing" ? (
