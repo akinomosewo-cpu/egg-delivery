@@ -501,7 +501,7 @@ export default function App() {
         fontFamily: "'Helvetica Neue', 'Segoe UI', Arial, system-ui, sans-serif",
         letterSpacing: "-0.01em",
         color: T.ink,
-        padding: "0 0 40px",
+        padding: "env(safe-area-inset-top, 0px) 0 calc(40px + env(safe-area-inset-bottom, 0px))",
       }}
     >
       <style>{`@keyframes pulse { 0%,100% {opacity:1} 50% {opacity:.35} }

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>egg-delivery</title>
   </head>
   <body>
@@ -20,11 +20,14 @@
 
     <div id="root" style="position: relative; z-index: 1;"></div>
 
-    <!-- One-time boot splash — shown briefly while the app loads, then fades out -->
+    <!-- One-time boot splash — shown briefly while the app loads, then fades out.
+         pointer-events: none from the start, so even if removal is delayed or
+         fails on a given browser engine, it can never block taps underneath it. -->
     <div id="boot-splash" style="
       position: fixed;
       inset: 0;
       z-index: 9999;
+      pointer-events: none;
       background: #A3CC52 url('/splash-full.png') center center / cover no-repeat;
       display: flex;
     "></div>
@@ -41,6 +44,12 @@
           }
           removed = true;
         }
+        // Primary signal: main.jsx calls this explicitly the moment the
+        // app has actually painted — reliable across browser engines,
+        // unlike inferring readiness from DOM mutations.
+        window.__appBooted = remove;
+
+        // Fallback in case the explicit signal never arrives for some reason
         var root = document.getElementById('root');
         if (root) {
           var observer = new MutationObserver(function () {
@@ -51,7 +60,7 @@
           });
           observer.observe(root, { childList: true });
         }
-        setTimeout(remove, 3000);
+        setTimeout(remove, 4000);
       })();
     </script>
     <script type="module" src="/src/main.jsx"></script>
