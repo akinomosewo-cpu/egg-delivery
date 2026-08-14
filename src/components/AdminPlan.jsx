@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { T, Btn, Tag, NumInput, fmtQty } from "./ui";
 
-export default function AdminPlan({ drivers, customers, helpers, deliveries, addDelivery, removeDelivery }) {
+export default function AdminPlan({ drivers, customers, helpers, deliveries, addDelivery, removeDelivery, availableStock }) {
   const [search, setSearch] = useState("");
   const [customerId, setCustomerId] = useState(null);
+  const todayStr = new Date().toLocaleDateString("en-CA");
+  const [deliveryDate, setDeliveryDate] = useState(todayStr);
   const [bigLarge, setBigLarge] = useState("");
   const [smallLarge, setSmallLarge] = useState("");
   const [medium, setMedium] = useState("");
@@ -51,10 +53,12 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
       pullet_assigned: Number(pullet) || 0,
       extra_assigned: Number(extra) || 0,
       price_due: totalPrice,
+      delivery_date: deliveryDate,
     });
     setSaving(false);
     setSearch("");
     setCustomerId(null);
+    setDeliveryDate(todayStr);
     setBigLarge("");
     setSmallLarge("");
     setMedium("");
@@ -230,7 +234,51 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
               ₦{totalPrice.toLocaleString("en-NG")}
             </div>
           </div>
+
+          <div style={{ marginTop: 12 }}>
+            <label style={{ fontSize: 12, fontWeight: 700, color: T.mute, display: "block", marginBottom: 4 }}>
+              Delivery date
+            </label>
+            <input
+              type="date"
+              value={deliveryDate}
+              min={todayStr}
+              onChange={(e) => setDeliveryDate(e.target.value)}
+              style={{
+                padding: "8px 10px",
+                fontSize: 14,
+                border: `1.5px solid ${T.line}`,
+                borderRadius: 8,
+                fontFamily: "inherit",
+                color: T.ink,
+                background: "#fff",
+              }}
+            />
+            {deliveryDate !== todayStr && (
+              <div style={{ fontSize: 11, color: T.mute, marginTop: 4 }}>
+                Scheduling for a future date — won't show up for drivers to claim until that day.
+              </div>
+            )}
+          </div>
         </div>
+
+        {crates > 0 && typeof availableStock === "number" && crates > availableStock && (
+          <div
+            style={{
+              background: "#FBEAE6",
+              border: `1.5px solid ${T.red}`,
+              borderRadius: 8,
+              padding: "10px 12px",
+              marginTop: 12,
+              marginBottom: 12,
+              fontSize: 13,
+              fontWeight: 700,
+              color: T.red,
+            }}
+          >
+            ⚠ Only {availableStock} crates in stock — posting anyway, since stock counts may be estimated.
+          </div>
+        )}
 
         <Btn full onClick={submit} disabled={saving || !chosen || crates === 0}>
           {saving ? "Posting…" : "Post delivery"}
