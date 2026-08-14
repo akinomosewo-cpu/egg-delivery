@@ -13,6 +13,7 @@ import AdminMap from "./components/AdminMap";
 import AdminStock from "./components/AdminStock";
 import ActivityLogTable from "./components/ActivityLogTable";
 import AdminBalances from "./components/AdminBalances";
+import AdminCalendar from "./components/AdminCalendar";
 import DriverApp from "./components/DriverApp";
 
 const ADMIN_PIN = "8791"; // change this to change the admin password
@@ -190,7 +191,7 @@ export default function App() {
 
   // ---- Actions ----
   const addDelivery = async (row) => {
-    const { error } = await supabase.from("deliveries").insert({ ...row, delivery_date: today() });
+    const { error } = await supabase.from("deliveries").insert({ ...row, delivery_date: row.delivery_date || today() });
     if (error) alert("Could not save: " + error.message);
     else loadAll();
   };
@@ -682,6 +683,7 @@ export default function App() {
                 { key: "stock", label: "Stock" },
                 { key: "log", label: "Log" },
                 { key: "balances", label: "Balances" },
+                { key: "calendar", label: "Calendar" },
                 { key: "events", label: "Events" },
                 { key: "missing", label: "Missing" },
                 { key: "reports", label: "Reports" },
@@ -773,6 +775,8 @@ export default function App() {
               <ActivityLogTable events={events} drivers={drivers} customers={customers} showAccount={true} />
             ) : adminTab === "balances" ? (
               <AdminBalances customers={customers} allDeliveries={allDeliveriesForStock} customerPayments={customerPayments} recordPayment={recordPayment} />
+            ) : adminTab === "calendar" ? (
+              <AdminCalendar customers={customers} allDeliveries={allDeliveriesForStock} />
             ) : adminTab === "today" ? (
               <AdminDayList drivers={drivers} customers={customers} helpers={helpers} deliveries={deliveries} />
             ) : adminTab === "missing" ? (
