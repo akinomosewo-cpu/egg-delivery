@@ -88,10 +88,10 @@ export default function AdminStock({ stockEntries, deliveries, addStockEntry, dr
       {stockCounts && stockCounts.length > 0 && (
         <div>
           <div style={{ fontSize: 13, fontWeight: 700, color: T.mute, marginBottom: 8 }}>
-            Morning counts reported by drivers
+            Warehouse counts reported by drivers
           </div>
           <div style={{ fontSize: 11, color: T.mute, marginBottom: 8 }}>
-            What drivers physically saw in the warehouse — a reference to compare against the computed number above, not part of the running total.
+            What drivers physically saw in the warehouse, morning and end of shift — a reference to compare against the computed number above, not part of the running total.
           </div>
           <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, overflow: "hidden" }}>
             {stockCounts.slice(0, 15).map((c) => (
@@ -107,10 +107,17 @@ export default function AdminStock({ stockEntries, deliveries, addStockEntry, dr
                     </a>
                   )}
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: 14 }}>{c.amount} crates</div>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>
+                      {c.count_type === "evening" ? "End of shift" : "Morning"}: S {c.amount_small ?? "—"} · M {c.amount_medium ?? "—"} · L {c.amount_large ?? "—"}
+                    </div>
                     <div style={{ fontSize: 12, color: T.mute }}>
                       {(drivers.find((d) => d.id === c.driver_id) || {}).name || "A driver"}
                     </div>
+                    {c.video_url && (
+                      <a href={c.video_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: T.ink, textDecoration: "underline" }}>
+                        🎥 Video
+                      </a>
+                    )}
                   </div>
                 </div>
                 <div style={{ fontSize: 12, color: T.mute, whiteSpace: "nowrap" }}>

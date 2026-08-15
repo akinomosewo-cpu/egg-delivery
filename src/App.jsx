@@ -423,8 +423,19 @@ export default function App() {
     else loadAll();
   };
 
-  const addStockCount = async (driverId, amount, photoUrl) => {
-    const { error } = await supabase.from("stock_counts").insert({ driver_id: driverId, amount, photo_url: photoUrl || null });
+  // A driver's warehouse count — morning (start of shift) or evening (end of
+  // shift), split by egg size. Just a reference reading, doesn't feed into
+  // the stock math itself. Shared once-per-type-per-day across all drivers.
+  const addStockCount = async (driverId, countType, small, medium, large, photoUrl, videoUrl) => {
+    const { error } = await supabase.from("stock_counts").insert({
+      driver_id: driverId,
+      count_type: countType,
+      amount_small: small,
+      amount_medium: medium,
+      amount_large: large,
+      photo_url: photoUrl || null,
+      video_url: videoUrl || null,
+    });
     if (error) alert("Could not save: " + error.message);
     else loadAll();
   };

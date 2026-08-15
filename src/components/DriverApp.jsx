@@ -61,8 +61,10 @@ export default function DriverApp({
   const [collectingDebtId, setCollectingDebtId] = useState(null);
   const [collectAmount, setCollectAmount] = useState("");
   const [collectPhoto, setCollectPhoto] = useState(null);
-  const [stockAmount, setStockAmount] = useState("");
-  const [stockPhoto, setStockPhoto] = useState(null);
+  const [stockForm, setStockForm] = useState({
+    morning: { small: "", medium: "", large: "", photo: null, video: null },
+    evening: { small: "", medium: "", large: "", photo: null, video: null },
+  });
   const [stockBusy, setStockBusy] = useState(false);
 
   // Keep a stable reference to updateDriverLocation — App.jsx redefines this
@@ -769,20 +771,30 @@ export default function DriverApp({
         );
       })()}
 
-      {/* Morning warehouse count — shared across all drivers, once per day */}
-      {(() => {
+      {/* Warehouse counts — morning (start of shift) and evening (end of
+          shift), each shared across all drivers, once per day per type */}
+      {["morning", "evening"].map((type) => {
         const todayStr = new Date().toLocaleDateString("en-CA");
-        const todayCount = (stockCounts || []).find((c) => c.work_date === todayStr);
+        const todayCount = (stockCounts || []).find((c) => c.work_date === todayStr && c.count_type === type);
+        const label = type === "morning" ? "morning" : "end of shift";
+        const question =
+          type === "morning"
+            ? "How many are left in the warehouse right now, before deliveries go out?"
+            : "How many are left in the warehouse now that the shift is ending?";
+
         if (todayCount) {
           const who = (drivers.find((d) => d.id === todayCount.driver_id) || {}).name || "A driver";
           return (
-            <div style={{ background: T.tan, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 14, opacity: 0.75 }}>
+            <div key={type} style={{ background: T.tan, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 14, opacity: 0.75 }}>
               <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4, color: T.mute }}>
-                This morning's warehouse count — done ✓
+                {type === "morning" ? "Morning" : "End of shift"} count — done ✓
               </div>
               <div style={{ fontSize: 13, color: T.mute }}>
-                {who} reported <b>{todayCount.amount} crates</b> at{" "}
+                {who} reported at{" "}
                 {new Date(todayCount.created_at).toLocaleTimeString("en-NG", { hour: "2-digit", minute: "2-digit" })}
+              </div>
+              <div style={{ fontSize: 13, marginTop: 4 }}>
+                Small: <b>{todayCount.amount_small ?? "—"}</b> · Medium: <b>{todayCount.amount_medium ?? "—"}</b> · Large: <b>{todayCount.amount_large ?? "—"}</b>
               </div>
               {todayCount.photo_url && (
                 <a href={todayCount.photo_url} target="_blank" rel="noreferrer">
@@ -793,49 +805,60 @@ export default function DriverApp({
                   />
                 </a>
               )}
+              {todayCount.video_url && (
+                <div style={{ marginTop: 6 }}>
+                  <a href={todayCount.video_url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: T.ink, textDecoration: "underline" }}>
+                    🎥 View proof video
+                  </a>
+                </div>
+              )}
             </div>
           );
         }
+
+        const s = stockForm[type];
+        const setField = (field, value) => setStockForm((prev) => ({ ...prev, [type]: { ...prev[type], [field]: value } }));
+        const filled = s.small !== "" && s.medium !== "" && s.large !== "" && s.photo && s.video;
+
         return (
-          <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 14 }}>
-            <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>Report this morning's warehouse count</div>
-            <div style={{ fontSize: 12, color: T.mute, marginBottom: 10 }}>
-              How many crates do you see in the warehouse right now, before deliveries go out? A photo is required as proof.
-            </div>
-            <div style={{ marginBottom: 12 }}>
-              <NumInput label="Crates in warehouse" value={stockAmount} onChange={setStockAmount} width={140} />
+          <div key={type} style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 14 }}>
+            <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>Report {label} warehouse count</div>
+            <div style={{ fontSize: 12, color: T.mute, marginBottom: 10 }}>{question} A photo and video are both required as proof.</div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+              <NumInput label="Small" value={s.small} onChange={(v) => setField("small", v)} width={90} />
+              <NumInput label="Medium" value={s.medium} onChange={(v) => setField("medium", v)} width={90} />
+              <NumInput label="Large" value={s.large} onChange={(v) => setField("large", v)} width={90} />
             </div>
             <div style={{ marginBottom: 12 }}>
               <MediaCapture
-                photos={stockPhoto ? [stockPhoto] : []}
-                onAddPhoto={(url) => setStockPhoto(url)}
-                onRemovePhoto={() => setStockPhoto(null)}
-                video={null}
-                onSetVideo={() => {}}
-                onRemoveVideo={() => {}}
+                photos={s.photo ? [s.photo] : []}
+                onAddPhoto={(url) => setField("photo", url)}
+                onRemovePhoto={() => setField("photo", null)}
+                video={s.video}
+                onSetVideo={(url) => setField("video", url)}
+                onRemoveVideo={() => setField("video", null)}
                 upload={uploadPhoto}
                 maxPhotos={1}
-                label="Photo proof (required)"
+                label="Photo and video proof (both required)"
               />
             </div>
             <Btn
               small
               full
               onClick={async () => {
-                if (!stockAmount || Number(stockAmount) <= 0 || !stockPhoto) return;
+                if (!filled) return;
                 setStockBusy(true);
-                await addStockCount(driverId, Number(stockAmount), stockPhoto);
+                await addStockCount(driverId, type, Number(s.small), Number(s.medium), Number(s.large), s.photo, s.video);
                 setStockBusy(false);
-                setStockAmount("");
-                setStockPhoto(null);
+                setStockForm((prev) => ({ ...prev, [type]: { small: "", medium: "", large: "", photo: null, video: null } }));
               }}
-              disabled={stockBusy || !stockAmount || Number(stockAmount) <= 0 || !stockPhoto}
+              disabled={stockBusy || !filled}
             >
               {stockBusy ? "Saving…" : "Submit count"}
             </Btn>
           </div>
         );
-      })()}
+      })}
     </div>
   );
 }
