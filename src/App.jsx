@@ -4,7 +4,6 @@ import { queueAction, getQueuedActions, removeQueuedAction, queueCount, looksOff
 import { T } from "./components/ui";
 import AdminPlan from "./components/AdminPlan";
 import AdminDashboard from "./components/AdminDashboard";
-import AdminEvents from "./components/AdminEvents";
 import AdminManage from "./components/AdminManage";
 import AdminReports from "./components/AdminReports";
 import AdminMissingCrates from "./components/AdminMissingCrates";
@@ -21,6 +20,7 @@ const ADMIN_PIN = "8791"; // change this to change the admin password
 export default function App() {
   const [device, setDevice] = useState("driver"); // driver-first: workers open this most
   const [adminTab, setAdminTab] = useState("plan");
+  const [moreOpen, setMoreOpen] = useState(false);
   const [adminUnlocked, setAdminUnlocked] = useState(false); // always asks for the PIN fresh
   const [pinEntry, setPinEntry] = useState("");
   const [pinError, setPinError] = useState(false);
@@ -55,7 +55,7 @@ export default function App() {
         supabase.from("deliveries").select("*").gt("missing_crates", 0).eq("missing_crates_resolved", false).order("delivery_date"),
         supabase.from("driver_locations").select("*"),
         supabase.from("stock_entries").select("*"),
-        supabase.from("deliveries").select("customer_id, crates_assigned, price_due, payment_collected, missing_crates, missing_crates_resolved, delivery_date"), // all-time — used for stock math and customer balances
+        supabase.from("deliveries").select("customer_id, crates_assigned, price_due, payment_collected, missing_crates, missing_crates_resolved, backorder_crates, empty_crates_left, delivery_date"), // all-time — used for stock math and customer balances
         supabase.from("stock_counts").select("*").order("created_at", { ascending: false }).limit(50),
         supabase.from("customer_payments").select("*").order("created_at", { ascending: false }),
       ]);
@@ -294,10 +294,10 @@ export default function App() {
 
   // Save a partial drop-off (driver couldn't carry the full order in one trip).
   // Accumulates onto whatever's already been delivered so far; does NOT complete the delivery.
-  const submitPartialDelivery = async (id, addedCrates, newPhotos, ctx) => {
+  const submitPartialDelivery = async (id, addedCrates, newPhotos, crateExchange, ctx) => {
     const { data: cur, error: e1 } = await supabase
       .from("deliveries")
-      .select("crates_delivered, photo_urls")
+      .select("crates_delivered, photo_urls, backorder_crates, empty_crates_picked_up, empty_crates_left, extra_delivered")
       .eq("id", id)
       .single();
     if (e1) {
@@ -308,7 +308,15 @@ export default function App() {
     const mergedPhotos = [...(cur.photo_urls || []), ...newPhotos];
     const { error } = await supabase
       .from("deliveries")
-      .update({ crates_delivered: newTotal, photo_urls: mergedPhotos, status: "arrived" })
+      .update({
+        crates_delivered: newTotal,
+        photo_urls: mergedPhotos,
+        status: "arrived",
+        extra_delivered: (cur.extra_delivered || 0) + Number(crateExchange?.extra || 0),
+        backorder_crates: (cur.backorder_crates || 0) + Number(crateExchange?.backorder || 0),
+        empty_crates_picked_up: (cur.empty_crates_picked_up || 0) + Number(crateExchange?.emptyPickedUp || 0),
+        empty_crates_left: Number(crateExchange?.emptyLeft || 0), // current standing debt at this stop, not cumulative
+      })
       .eq("id", id);
     if (error) {
       alert("Could not save: " + error.message);
@@ -319,10 +327,10 @@ export default function App() {
   };
 
   // Complete a delivery — called once cumulative delivered crates reach the assigned amount
-  const markDelivered = async (id, addedCrates, photoUrls, videoUrl, missingEggs, missingCrates, signatureUrl, sizes, payment, receiptUrl, ctx) => {
+  const markDelivered = async (id, addedCrates, photoUrls, videoUrl, missingEggs, missingCrates, signatureUrl, sizes, payment, receiptUrl, crateExchange, ctx) => {
     const { data: cur, error: e1 } = await supabase
       .from("deliveries")
-      .select("crates_delivered, photo_urls")
+      .select("crates_delivered, photo_urls, backorder_crates, empty_crates_picked_up, extra_delivered")
       .eq("id", id)
       .single();
     if (e1) {
@@ -346,7 +354,10 @@ export default function App() {
         small_large_delivered: sizes.smallLarge,
         medium_delivered: sizes.medium,
         pullet_delivered: sizes.pullet,
-        extra_delivered: sizes.extra,
+        extra_delivered: (cur.extra_delivered || 0) + Number(crateExchange?.extra || 0),
+        backorder_crates: (cur.backorder_crates || 0) + Number(crateExchange?.backorder || 0),
+        empty_crates_picked_up: (cur.empty_crates_picked_up || 0) + Number(crateExchange?.emptyPickedUp || 0),
+        empty_crates_left: Number(crateExchange?.emptyLeft || 0),
         payment_collected: payment,
         receipt_url: receiptUrl,
         delivered_at: new Date().toISOString(),
@@ -359,18 +370,6 @@ export default function App() {
     await logEvent({ driver_id: ctx.driver_id, customer_id: ctx.customer_id, delivery_id: id, event_type: "delivered" });
     loadAll();
 
-  };
-
-  const submitCrateReturn = async (driverId, count, photoUrls, videoUrl) => {
-    const { error } = await supabase
-      .from("crate_returns")
-      .insert({ driver_id: driverId, crate_count: count, photo_urls: photoUrls, video_url: videoUrl, return_date: today() });
-    if (error) {
-      alert("Could not send: " + error.message);
-      return;
-    }
-    await logEvent({ driver_id: driverId, event_type: "crates_submitted" });
-    loadAll();
   };
 
   const addDriver = async (name) => {
@@ -685,24 +684,16 @@ export default function App() {
           </div>
         ) : device === "admin" ? (
           <>
-            <div style={{ display: "flex", alignItems: "center", gap: 18, marginBottom: 16, borderBottom: `1.5px solid ${T.line}`, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 18, marginBottom: 16, borderBottom: `1.5px solid ${T.line}`, flexWrap: "wrap", position: "relative" }}>
               {[
                 { key: "plan", label: "Plan" },
                 { key: "today", label: "Today" },
                 { key: "live", label: "Live" },
                 { key: "map", label: "Map" },
-                { key: "stock", label: "Stock" },
-                { key: "log", label: "Log" },
-                { key: "balances", label: "Balances" },
-                { key: "calendar", label: "Calendar" },
-                { key: "events", label: "Events" },
-                { key: "missing", label: "Missing" },
-                { key: "reports", label: "Reports" },
-                { key: "manage", label: "Manage" },
               ].map((t) => (
                 <button
                   key={t.key}
-                  onClick={() => setAdminTab(t.key)}
+                  onClick={() => { setAdminTab(t.key); setMoreOpen(false); }}
                   style={{
                     background: "none",
                     border: "none",
@@ -719,7 +710,78 @@ export default function App() {
                   {t.label}
                 </button>
               ))}
-              {(adminTab === "live" || adminTab === "events") && (
+              {(() => {
+                const moreTabs = [
+                  { key: "stock", label: "Stock" },
+                  { key: "log", label: "Log" },
+                  { key: "balances", label: "Balances" },
+                  { key: "calendar", label: "Calendar" },
+                  { key: "missing", label: "Missing" },
+                  { key: "reports", label: "Reports" },
+                  { key: "manage", label: "Manage" },
+                ];
+                const activeInMore = moreTabs.find((t) => t.key === adminTab);
+                return (
+                  <div style={{ position: "relative" }}>
+                    <button
+                      onClick={() => setMoreOpen((o) => !o)}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        fontFamily: "inherit",
+                        fontWeight: 800,
+                        fontSize: 14,
+                        padding: "8px 2px 10px",
+                        cursor: "pointer",
+                        color: activeInMore ? T.ink : T.mute,
+                        borderBottom: activeInMore ? `3px solid ${T.yolk}` : "3px solid transparent",
+                        marginBottom: -1.5,
+                      }}
+                    >
+                      {activeInMore ? activeInMore.label : "More"} ▾
+                    </button>
+                    {moreOpen && (
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: "100%",
+                          left: 0,
+                          zIndex: 20,
+                          background: T.paper,
+                          border: `1.5px solid ${T.line}`,
+                          borderRadius: 10,
+                          boxShadow: "0 6px 18px rgba(0,0,0,0.12)",
+                          minWidth: 150,
+                          overflow: "hidden",
+                        }}
+                      >
+                        {moreTabs.map((t) => (
+                          <button
+                            key={t.key}
+                            onClick={() => { setAdminTab(t.key); setMoreOpen(false); }}
+                            style={{
+                              display: "block",
+                              width: "100%",
+                              textAlign: "left",
+                              background: adminTab === t.key ? T.tan : "none",
+                              border: "none",
+                              fontFamily: "inherit",
+                              fontWeight: 700,
+                              fontSize: 13,
+                              padding: "10px 14px",
+                              cursor: "pointer",
+                              color: T.ink,
+                            }}
+                          >
+                            {t.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+              {adminTab === "live" && (
                 <button
                   onClick={clearTodayData}
                   style={{
@@ -740,7 +802,7 @@ export default function App() {
               <button
                 onClick={lockAdmin}
                 style={{
-                  marginLeft: adminTab === "live" || adminTab === "events" ? 0 : "auto",
+                  marginLeft: adminTab === "live" ? 0 : "auto",
                   background: "none",
                   border: "none",
                   fontFamily: "inherit",
@@ -773,11 +835,8 @@ export default function App() {
                 customers={customers}
                 helpers={helpers}
                 deliveries={deliveries}
-                crateReturns={crateReturns}
                 driverLocations={driverLocations}
               />
-            ) : adminTab === "events" ? (
-              <AdminEvents drivers={drivers} customers={customers} events={events} />
             ) : adminTab === "map" ? (
               <AdminMap drivers={drivers} customers={customers} driverLocations={driverLocations} deliveries={deliveries} geocodeCustomer={geocodeCustomer} />
             ) : adminTab === "stock" ? (
@@ -819,14 +878,12 @@ export default function App() {
             customers={customers}
             helpers={helpers}
             deliveries={deliveries}
-            crateReturns={crateReturns}
             openDebts={openDebts}
             claimDelivery={claimDelivery}
             unclaimDelivery={unclaimDelivery}
             updateStatus={updateStatus}
             submitPartialDelivery={submitPartialDelivery}
             markDelivered={markDelivered}
-            submitCrateReturn={submitCrateReturn}
             resolveMissingCrates={resolveMissingCrates}
             collectMissingCrates={collectMissingCrates}
             updateDriverLocation={updateDriverLocation}

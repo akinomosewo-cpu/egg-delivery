@@ -68,6 +68,7 @@ export default function AdminDayList({ drivers, customers, helpers, deliveries }
           const owesMore = d.missing_crates > 0 && !d.missing_crates_resolved;
 
           const isOpen = expandedId === d.id;
+          const isPartial = d.status !== "delivered" && (d.crates_delivered || 0) > 0 && (d.crates_delivered || 0) < d.crates_assigned;
           const sizes = [
             ["Big large", d.big_large_delivered],
             ["Small large", d.small_large_delivered],
@@ -80,8 +81,8 @@ export default function AdminDayList({ drivers, customers, helpers, deliveries }
               key={d.id}
               onClick={() => setExpandedId(isOpen ? null : d.id)}
               style={{
-                background: T.card,
-                border: `1.5px solid ${T.line}`,
+                background: isPartial ? "#FBEAE6" : T.card,
+                border: `1.5px solid ${isPartial ? T.red : T.line}`,
                 borderRadius: 10,
                 padding: "10px 12px",
                 textAlign: "left",
@@ -99,9 +100,15 @@ export default function AdminDayList({ drivers, customers, helpers, deliveries }
                     {helperNames.length > 0 && ` + ${helperNames.join(", ")}`}
                   </div>
                 </div>
-                <Tag color={tagColor} bg={tagBg}>
-                  {STATUS_LABEL[d.status]}
-                </Tag>
+                {isPartial ? (
+                  <Tag color={T.red} bg="#FBEAE6">
+                    🔁 Partial: {d.crates_delivered}/{d.crates_assigned}
+                  </Tag>
+                ) : (
+                  <Tag color={tagColor} bg={tagBg}>
+                    {STATUS_LABEL[d.status]}
+                  </Tag>
+                )}
               </div>
 
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, fontSize: 12 }}>
@@ -153,6 +160,21 @@ export default function AdminDayList({ drivers, customers, helpers, deliveries }
                     <div style={{ marginBottom: 10 }}>
                       <div style={{ fontSize: 11, color: T.mute, fontWeight: 700, marginBottom: 2 }}>SIZE BREAKDOWN</div>
                       <div style={{ fontSize: 13, fontWeight: 600 }}>{sizes.map(([label, v]) => `${label}: ${v}`).join(" · ")}</div>
+                    </div>
+                  )}
+
+                  {(Number(d.backorder_crates) > 0 || Number(d.empty_crates_picked_up) > 0 || Number(d.empty_crates_left) > 0) && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 11, color: T.mute, fontWeight: 700, marginBottom: 2 }}>CRATE / STOCK EXCHANGE</div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>
+                        {Number(d.backorder_crates) > 0 && (
+                          <div style={{ color: T.red, fontWeight: 700 }}>{d.backorder_crates} crate{d.backorder_crates !== 1 ? "s" : ""} backordered (short of eggs)</div>
+                        )}
+                        {Number(d.empty_crates_picked_up) > 0 && <div>Empty crates picked up: {d.empty_crates_picked_up}</div>}
+                        {Number(d.empty_crates_left) > 0 && (
+                          <div style={{ color: T.red, fontWeight: 700 }}>{d.empty_crates_left} empty crate{d.empty_crates_left !== 1 ? "s" : ""} still left with customer</div>
+                        )}
+                      </div>
                     </div>
                   )}
 

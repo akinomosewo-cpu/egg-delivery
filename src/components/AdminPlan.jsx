@@ -15,7 +15,6 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
   const [priceSmallLarge, setPriceSmallLarge] = useState("");
   const [priceMedium, setPriceMedium] = useState("");
   const [pricePullet, setPricePullet] = useState("");
-  const [priceExtra, setPriceExtra] = useState("");
   const [saving, setSaving] = useState(false);
 
   const matches = search
@@ -37,8 +36,7 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
     (Number(bigLarge) || 0) * (Number(priceBigLarge) || 0) +
     (Number(smallLarge) || 0) * (Number(priceSmallLarge) || 0) +
     (Number(medium) || 0) * (Number(priceMedium) || 0) +
-    (Number(pullet) || 0) * (Number(pricePullet) || 0) +
-    (Number(extra) || 0) * (Number(priceExtra) || 0);
+    (Number(pullet) || 0) * (Number(pricePullet) || 0);
 
   const submit = async () => {
     if (!chosen || crates === 0) return;
@@ -68,7 +66,6 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
     setPriceSmallLarge("");
     setPriceMedium("");
     setPricePullet("");
-    setPriceExtra("");
   };
 
   return (
@@ -195,8 +192,7 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
               </div>
             ))}
             <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
-              <NumInput label="Extra" value={extra} onChange={setExtra} width={90} decimal fractions />
-              <NumInput label="Price per crate (₦)" value={priceExtra} onChange={setPriceExtra} width={130} decimal />
+              <NumInput label="Extra (no charge)" value={extra} onChange={setExtra} width={90} decimal fractions />
             </div>
           </div>
         </div>

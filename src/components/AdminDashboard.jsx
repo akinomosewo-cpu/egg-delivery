@@ -24,7 +24,7 @@ const STALE_MINUTES = 20;
 
 const money = (n) => `₦${Number(n || 0).toLocaleString("en-NG")}`;
 
-export default function AdminDashboard({ drivers, customers, helpers, deliveries, crateReturns, driverLocations }) {
+export default function AdminDashboard({ drivers, customers, helpers, deliveries, driverLocations }) {
   const [expandedId, setExpandedId] = useState(null);
   const [, forceRedraw] = useState(0);
   const mapRef = useRef(null);
@@ -191,11 +191,13 @@ export default function AdminDashboard({ drivers, customers, helpers, deliveries
         const list = deliveries.filter((d) => d.driver_id === drv.id);
         const done = list.filter((d) => d.status === "delivered");
         const pending = list.filter((d) => d.status !== "delivered");
-        const ret = crateReturns.find((r) => r.driver_id === drv.id);
         const loc = driverLocations?.find((l) => l.driver_id === drv.id);
         const staleMin = loc ? Math.round((Date.now() - new Date(loc.updated_at)) / 60000) : null;
         const isStale = pending.length > 0 && (staleMin === null || staleMin > STALE_MINUTES);
-        if (list.length === 0 && !ret) return null;
+        if (list.length === 0) return null;
+        const emptyCratesLeft = list.reduce((s, d) => s + Number(d.empty_crates_left || 0), 0);
+        const missingEggsTotal = list.reduce((s, d) => s + Number(d.missing_eggs || 0), 0);
+        const backorderTotal = list.reduce((s, d) => s + Number(d.backorder_crates || 0), 0);
         return (
           <div
             key={drv.id}
@@ -224,6 +226,16 @@ export default function AdminDashboard({ drivers, customers, helpers, deliveries
               </div>
             </div>
 
+            {(emptyCratesLeft > 0 || missingEggsTotal > 0) && (
+              <div style={{ padding: "8px 14px", background: "#FBEAE6", borderBottom: `1px solid ${T.line}`, fontSize: 12, fontWeight: 700, color: T.red }}>
+                ⚠ {drv.name} is responsible for
+                {emptyCratesLeft > 0 ? ` ${emptyCratesLeft} empty crate${emptyCratesLeft !== 1 ? "s" : ""} left with customers` : ""}
+                {emptyCratesLeft > 0 && missingEggsTotal > 0 ? " · " : ""}
+                {missingEggsTotal > 0 ? ` ${missingEggsTotal} cracked egg${missingEggsTotal !== 1 ? "s" : ""}` : ""}
+                {backorderTotal > 0 ? ` (also ${backorderTotal} crate${backorderTotal !== 1 ? "s" : ""} backordered to customers)` : ""}
+              </div>
+            )}
+
             {list.map((d) => {
               const c = customers.find((x) => x.id === d.customer_id);
               const short =
@@ -242,10 +254,10 @@ export default function AdminDashboard({ drivers, customers, helpers, deliveries
               ].filter(([, v]) => v > 0);
 
               return (
-                <div key={d.id} style={{ borderBottom: `1px solid ${T.line}` }}>
+                <div key={d.id} style={{ borderBottom: `1px solid ${T.line}`, borderLeft: isPartial ? `4px solid ${T.red}` : "4px solid transparent" }}>
                   <button
                     onClick={() => setExpandedId(isOpen ? null : d.id)}
-                    style={{ width: "100%", textAlign: "left", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: "10px 14px" }}
+                    style={{ width: "100%", textAlign: "left", background: isPartial ? "#FBEAE6" : "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: "10px 14px" }}
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <div style={{ fontWeight: 700, fontSize: 14, color: T.ink }}>{c ? c.name : "…"}</div>
@@ -334,6 +346,21 @@ export default function AdminDashboard({ drivers, customers, helpers, deliveries
                           </div>
                         </div>
 
+                        {(Number(d.backorder_crates) > 0 || Number(d.empty_crates_picked_up) > 0 || Number(d.empty_crates_left) > 0) && (
+                          <div style={{ marginBottom: 14 }}>
+                            <div style={{ fontSize: 11, color: T.mute, fontWeight: 700, marginBottom: 4 }}>CRATE / STOCK EXCHANGE</div>
+                            <div style={{ fontSize: 13, fontWeight: 600 }}>
+                              {Number(d.backorder_crates) > 0 && (
+                                <div style={{ color: T.red, fontWeight: 700 }}>{d.backorder_crates} crate{d.backorder_crates !== 1 ? "s" : ""} backordered (short of eggs)</div>
+                              )}
+                              {Number(d.empty_crates_picked_up) > 0 && <div>Empty crates picked up: {d.empty_crates_picked_up}</div>}
+                              {Number(d.empty_crates_left) > 0 && (
+                                <div style={{ color: T.red, fontWeight: 700 }}>{d.empty_crates_left} empty crate{d.empty_crates_left !== 1 ? "s" : ""} still left with customer</div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
                         {sizes.length > 0 && (
                           <div style={{ marginBottom: 14 }}>
                             <div style={{ fontSize: 11, color: T.mute, fontWeight: 700, marginBottom: 4 }}>SIZE BREAKDOWN</div>
@@ -408,34 +435,11 @@ export default function AdminDashboard({ drivers, customers, helpers, deliveries
               );
             })}
 
-            {ret && (
-              <div style={{ padding: "12px 14px", background: "#F5FBE6" }}>
-                <div style={{ fontWeight: 800, fontSize: 13, color: T.yolkDark }}>
-                  Crates returned: {ret.crate_count} · {fmtDateTime(ret.submitted_at)}
-                </div>
-                <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
-                  {(ret.photo_urls || []).map((p, i) => (
-                    <a key={i} href={p} target="_blank" rel="noreferrer">
-                      <img
-                        src={p}
-                        alt={`crates ${i + 1}`}
-                        style={{ width: 54, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }}
-                      />
-                    </a>
-                  ))}
-                  {ret.video_url && (
-                    <a href={ret.video_url} target="_blank" rel="noreferrer">
-                      <video src={ret.video_url} style={{ width: 90, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }} muted />
-                    </a>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
         );
       })}
 
-      {deliveries.length === 0 && crateReturns.length === 0 && (
+      {deliveries.length === 0 && (
         <div style={{ textAlign: "center", color: T.mute, fontSize: 14, padding: 30 }}>
           No deliveries yet today. Add stops in the Plan tab.
         </div>

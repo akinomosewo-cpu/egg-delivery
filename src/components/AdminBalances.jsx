@@ -22,13 +22,17 @@ export default function AdminBalances({ customers, allDeliveries, customerPaymen
         (s, d) => s + (d.missing_crates_resolved ? 0 : Number(d.missing_crates || 0)),
         0
       );
-      return { customer: c, moneyOwed, cratesOwed, deliveryCount: theirs.length, theirs, theirPayments };
+      const backorderOwed = theirs.reduce((s, d) => s + Number(d.backorder_crates || 0), 0);
+      const emptyCratesOwed = theirs.reduce((s, d) => s + Number(d.empty_crates_left || 0), 0);
+      return { customer: c, moneyOwed, cratesOwed, backorderOwed, emptyCratesOwed, deliveryCount: theirs.length, theirs, theirPayments };
     })
-    .filter((b) => b.moneyOwed > 0 || b.cratesOwed > 0)
+    .filter((b) => b.moneyOwed > 0 || b.cratesOwed > 0 || b.backorderOwed > 0 || b.emptyCratesOwed > 0)
     .sort((a, b) => b.moneyOwed - a.moneyOwed);
 
   const totalMoneyOwed = balances.reduce((s, b) => s + b.moneyOwed, 0);
   const totalCratesOwed = balances.reduce((s, b) => s + b.cratesOwed, 0);
+  const totalBackorderOwed = balances.reduce((s, b) => s + b.backorderOwed, 0);
+  const totalEmptyCratesOwed = balances.reduce((s, b) => s + b.emptyCratesOwed, 0);
 
   const submitPayment = async (customerId) => {
     if (!payAmount || Number(payAmount) <= 0 || !payPhoto) return;
@@ -51,6 +55,8 @@ export default function AdminBalances({ customers, allDeliveries, customerPaymen
         <div style={{ fontSize: 12, color: "#8A8A80", marginTop: 4 }}>
           across {balances.length} customer{balances.length !== 1 ? "s" : ""}
           {totalCratesOwed > 0 ? ` · ${totalCratesOwed} crates also owed` : ""}
+          {totalBackorderOwed > 0 ? ` · ${totalBackorderOwed} backordered` : ""}
+          {totalEmptyCratesOwed > 0 ? ` · ${totalEmptyCratesOwed} empty crates left` : ""}
         </div>
       </div>
 
@@ -81,10 +87,20 @@ export default function AdminBalances({ customers, allDeliveries, customerPaymen
                   </span>
                 )}
               </div>
-              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+              <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
                 {b.cratesOwed > 0 && (
                   <Tag color={T.red} bg="#FBEAE6">
                     {b.cratesOwed} crates owed
+                  </Tag>
+                )}
+                {b.backorderOwed > 0 && (
+                  <Tag color={T.red} bg="#FBEAE6">
+                    {b.backorderOwed} backordered
+                  </Tag>
+                )}
+                {b.emptyCratesOwed > 0 && (
+                  <Tag color={T.red} bg="#FBEAE6">
+                    {b.emptyCratesOwed} empty crates left
                   </Tag>
                 )}
                 <span style={{ fontSize: 12, color: T.mute }}>{b.deliveryCount} deliveries total</span>

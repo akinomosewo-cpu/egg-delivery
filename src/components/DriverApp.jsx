@@ -26,14 +26,12 @@ export default function DriverApp({
   customers,
   helpers,
   deliveries,
-  crateReturns,
   openDebts,
   claimDelivery,
   unclaimDelivery,
   updateStatus,
   submitPartialDelivery,
   markDelivered,
-  submitCrateReturn,
   resolveMissingCrates,
   collectMissingCrates,
   updateDriverLocation,
@@ -46,17 +44,18 @@ export default function DriverApp({
   const [pickedHelpers, setPickedHelpers] = useState([]);
   const [openStop, setOpenStop] = useState(null);
   const [dc, setDc] = useState("");
+  const [extraDelivered, setExtraDelivered] = useState("");
+  const [emptyPickedUp, setEmptyPickedUp] = useState("");
+  const [emptyLeft, setEmptyLeft] = useState("");
   const [stopPhotos, setStopPhotos] = useState([]);
   const [stopVideo, setStopVideo] = useState(null);
   const [missingEggs, setMissingEggs] = useState("");
   const [missingCrates, setMissingCrates] = useState("");
+  const [backorderCrates, setBackorderCrates] = useState("");
   const [signatureUrl, setSignatureUrl] = useState(null);
   const [signatureSkipped, setSignatureSkipped] = useState(false);
   const [payment, setPayment] = useState("");
   const [receiptPhoto, setReceiptPhoto] = useState(null);
-  const [retCount, setRetCount] = useState("");
-  const [retPhotos, setRetPhotos] = useState([]);
-  const [retVideo, setRetVideo] = useState(null);
   const [busy, setBusy] = useState(false);
   const [collectingDebtId, setCollectingDebtId] = useState(null);
   const [collectAmount, setCollectAmount] = useState("");
@@ -140,7 +139,6 @@ export default function DriverApp({
   const myStops = deliveries.filter((d) => d.driver_id === driverId);
   const pending = myStops.filter((d) => d.status !== "delivered");
   const done = myStops.filter((d) => d.status === "delivered");
-  const myReturn = crateReturns.find((r) => r.driver_id === driverId);
   const stop = myStops.find((d) => d.id === openStop);
   const claiming = available.find((d) => d.id === claimingId);
 
@@ -319,10 +317,10 @@ export default function DriverApp({
                 )}
 
                 <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
-                  {alreadyDelivered > 0 ? "How many crates this trip?" : "How many crates delivered?"}
+                  Crates of egg delivered
                   <span style={{ color: T.mute, fontWeight: 600 }}> (max {remaining})</span>
                 </div>
-                <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+                <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
                   <NumInput
                     label="Crates this trip"
                     value={dc}
@@ -333,6 +331,13 @@ export default function DriverApp({
                     }}
                     width={120}
                   />
+                  <NumInput label="Extra delivered" value={extraDelivered} onChange={setExtraDelivered} width={120} decimal fractions />
+                </div>
+
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Empty crate exchange at this stop</div>
+                <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+                  <NumInput label="Picked up" value={emptyPickedUp} onChange={setEmptyPickedUp} width={110} />
+                  <NumInput label="Left with customer" value={emptyLeft} onChange={setEmptyLeft} width={140} />
                 </div>
 
                 <div style={{ marginBottom: 18 }}>
@@ -357,9 +362,10 @@ export default function DriverApp({
 
                 {isFinalVisit && (
                   <>
-                    <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+                    <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
                       <NumInput label="Missing crates" value={missingCrates} onChange={setMissingCrates} width={120} />
                       <NumInput label="Cracked eggs" value={missingEggs} onChange={setMissingEggs} width={140} />
+                      <NumInput label="Owed to customer (short of eggs)" value={backorderCrates} onChange={setBackorderCrates} width={180} />
                     </div>
 
                     <div style={{ marginBottom: 16 }}>
@@ -427,6 +433,12 @@ export default function DriverApp({
                   }
                   onClick={async () => {
                     setBusy(true);
+                    const crateExchange = {
+                      extra: extraDelivered === "" ? 0 : Number(extraDelivered),
+                      backorder: backorderCrates === "" ? 0 : Number(backorderCrates),
+                      emptyPickedUp: emptyPickedUp === "" ? 0 : Number(emptyPickedUp),
+                      emptyLeft: emptyLeft === "" ? 0 : Number(emptyLeft),
+                    };
                     if (isFinalVisit) {
                       await markDelivered(
                         stop.id,
@@ -441,14 +453,14 @@ export default function DriverApp({
                           smallLarge: 0,
                           medium: 0,
                           pullet: 0,
-                          extra: 0,
                         },
                         payment === "" ? 0 : Number(payment),
                         receiptPhoto,
+                        crateExchange,
                         { driver_id: driverId, customer_id: stop.customer_id }
                       );
                     } else {
-                      await submitPartialDelivery(stop.id, thisVisit, stopPhotos, {
+                      await submitPartialDelivery(stop.id, thisVisit, stopPhotos, crateExchange, {
                         driver_id: driverId,
                         customer_id: stop.customer_id,
                       });
@@ -456,10 +468,14 @@ export default function DriverApp({
                     setBusy(false);
                     setOpenStop(null);
                     setDc("");
+                    setExtraDelivered("");
+                    setEmptyPickedUp("");
+                    setEmptyLeft("");
                     setStopPhotos([]);
                     setStopVideo(null);
                     setMissingEggs("");
                     setMissingCrates("");
+                    setBackorderCrates("");
                     setSignatureUrl(null);
                     setSignatureSkipped(false);
                     setPayment("");
@@ -569,6 +585,10 @@ export default function DriverApp({
                     if (!isDone) {
                       setOpenStop(d.id);
                       setDc("");
+                      setExtraDelivered("");
+                      setEmptyPickedUp("");
+                      setEmptyLeft("");
+                      setBackorderCrates("");
                       setStopPhotos([]);
                       setStopVideo(null);
                     }
@@ -626,61 +646,33 @@ export default function DriverApp({
           })}
         </div>
 
-        {myStops.length > 0 && pending.length === 0 && !myReturn && (
-          <div style={{ background: "#F5FBE6", border: `1.5px solid ${T.ink}`, borderRadius: 12, padding: 16, marginTop: 10 }}>
-            <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>All stops done</div>
-            <div style={{ fontSize: 13, color: T.mute, marginBottom: 12 }}>
-              Count the crates you collected back and photograph them.
-            </div>
-            <div style={{ marginBottom: 12 }}>
-              <NumInput label="Crates collected" value={retCount} onChange={setRetCount} width={120} />
-            </div>
-            <div style={{ marginBottom: 16 }}>
-              <MediaCapture
-                photos={retPhotos}
-                onAddPhoto={(url) => setRetPhotos((x) => [...x, url])}
-                onRemovePhoto={(i) => setRetPhotos((p) => p.filter((_, idx) => idx !== i))}
-                video={retVideo}
-                onSetVideo={setRetVideo}
-                onRemoveVideo={() => setRetVideo(null)}
-                upload={uploadPhoto}
-                maxPhotos={5}
-                label="Photos of the crates"
-              />
-            </div>
-            <Btn
-              full
-              disabled={busy || retCount === "" || retPhotos.length === 0}
-              onClick={async () => {
-                setBusy(true);
-                await submitCrateReturn(driverId, Number(retCount), retPhotos, retVideo);
-                setBusy(false);
-                setRetCount("");
-                setRetPhotos([]);
-                setRetVideo(null);
+        {myStops.length > 0 && pending.length === 0 && (() => {
+          const totalPickedUp = myStops.reduce((s, d) => s + Number(d.empty_crates_picked_up || 0), 0);
+          const totalLeft = myStops.reduce((s, d) => s + Number(d.empty_crates_left || 0), 0);
+          return (
+            <div
+              style={{
+                background: T.greenBg,
+                border: `1.5px solid ${T.green}`,
+                borderRadius: 12,
+                padding: 16,
+                textAlign: "center",
+                marginTop: 10,
               }}
             >
-              {busy ? "Sending…" : "Send crate count to office"}
-            </Btn>
-          </div>
-        )}
-
-        {myReturn && (
-          <div
-            style={{
-              background: T.greenBg,
-              border: `1.5px solid ${T.green}`,
-              borderRadius: 12,
-              padding: 16,
-              textAlign: "center",
-              fontWeight: 800,
-              color: T.green,
-              marginTop: 10,
-            }}
-          >
-            Route closed · {myReturn.crate_count} crates sent to office ✓
-          </div>
-        )}
+              <div style={{ fontWeight: 800, color: T.green, marginBottom: 4 }}>All stops done ✓</div>
+              <div style={{ fontSize: 13, color: T.mute }}>
+                Empty crates picked up today: <b>{totalPickedUp}</b>
+                {totalLeft > 0 && (
+                  <>
+                    {" · "}
+                    <span style={{ color: T.red, fontWeight: 700 }}>{totalLeft} still left with customers</span>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Missing crates owed by customers — only from this driver's own deliveries */}
