@@ -502,14 +502,12 @@ export default function DriverApp({
   const crateIssues = (() => {
     const byCustomer = {};
     openDebts
-      .filter((d) => d.driver_id === driverId)
       .forEach((d) => {
         const key = d.customer_id;
         if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, backorder: 0, emptyLeft: 0, emptyLeftDate: null };
         byCustomer[key].owed += Number(d.missing_crates || 0);
       });
     (allDeliveries || [])
-      .filter((d) => d.driver_id === driverId)
       .forEach((d) => {
         const key = d.customer_id;
         if (Number(d.backorder_crates || 0) > 0) {
