@@ -55,7 +55,7 @@ export default function App() {
         supabase.from("deliveries").select("*").gt("missing_crates", 0).eq("missing_crates_resolved", false).order("delivery_date"),
         supabase.from("driver_locations").select("*"),
         supabase.from("stock_entries").select("*"),
-        supabase.from("deliveries").select("customer_id, crates_assigned, price_due, payment_collected, missing_crates, missing_crates_resolved, backorder_crates, empty_crates_left, delivery_date"), // all-time — used for stock math and customer balances
+        supabase.from("deliveries").select("id, driver_id, customer_id, crates_assigned, price_due, payment_collected, missing_crates, missing_crates_resolved, backorder_crates, empty_crates_left, delivery_date"), // all-time — used for stock math, customer balances, and driver crate-issue banner
         supabase.from("stock_counts").select("*").order("created_at", { ascending: false }).limit(50),
         supabase.from("customer_payments").select("*").order("created_at", { ascending: false }),
       ]);
@@ -294,10 +294,10 @@ export default function App() {
 
   // Save a partial drop-off (driver couldn't carry the full order in one trip).
   // Accumulates onto whatever's already been delivered so far; does NOT complete the delivery.
-  const submitPartialDelivery = async (id, addedCrates, newPhotos, crateExchange, ctx) => {
+  const submitPartialDelivery = async (id, addedCrates, newPhotos, newVideo, crateExchange, ctx) => {
     const { data: cur, error: e1 } = await supabase
       .from("deliveries")
-      .select("crates_delivered, photo_urls, backorder_crates, empty_crates_picked_up, empty_crates_left, extra_delivered")
+      .select("crates_delivered, photo_urls, video_url, backorder_crates, empty_crates_picked_up, empty_crates_left, extra_delivered")
       .eq("id", id)
       .single();
     if (e1) {
@@ -311,6 +311,7 @@ export default function App() {
       .update({
         crates_delivered: newTotal,
         photo_urls: mergedPhotos,
+        video_url: newVideo || cur.video_url,
         status: "arrived",
         extra_delivered: (cur.extra_delivered || 0) + Number(crateExchange?.extra || 0),
         backorder_crates: (cur.backorder_crates || 0) + Number(crateExchange?.backorder || 0),
@@ -330,7 +331,7 @@ export default function App() {
   const markDelivered = async (id, addedCrates, photoUrls, videoUrl, missingEggs, missingCrates, signatureUrl, sizes, payment, receiptUrl, crateExchange, ctx) => {
     const { data: cur, error: e1 } = await supabase
       .from("deliveries")
-      .select("crates_delivered, photo_urls, backorder_crates, empty_crates_picked_up, extra_delivered")
+      .select("crates_delivered, photo_urls, video_url, backorder_crates, empty_crates_picked_up, extra_delivered")
       .eq("id", id)
       .single();
     if (e1) {
@@ -346,7 +347,7 @@ export default function App() {
         crates_delivered: finalCrates,
         eggs_delivered: 0,
         photo_urls: mergedPhotos,
-        video_url: videoUrl,
+        video_url: videoUrl || cur.video_url,
         missing_eggs: missingEggs,
         missing_crates: missingCrates,
         signature_url: signatureUrl,
@@ -879,6 +880,7 @@ export default function App() {
             helpers={helpers}
             deliveries={deliveries}
             openDebts={openDebts}
+            allDeliveries={allDeliveriesForStock}
             claimDelivery={claimDelivery}
             unclaimDelivery={unclaimDelivery}
             updateStatus={updateStatus}

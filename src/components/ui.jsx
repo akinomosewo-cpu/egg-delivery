@@ -157,7 +157,15 @@ export const TextInput = ({ label, value, onChange, placeholder }) => (
   </label>
 );
 
-// Media capture: up to N photos + one optional video
+// Media capture: up to N photos + one optional video.
+// Uses plain native file inputs — tapping either button brings up Android's
+// own picker (Camera or Files/Gallery), and whichever the driver picks hands
+// the finished file straight back here to upload. This replaced an in-page
+// live camera view that had two problems: it couldn't reliably record audio
+// on Android's built-in encoder, and it duplicated what the OS picker
+// already does well. The kiosk tablet's lock-task allowlist (see
+// MainActivity.java) already permits the camera/file-picker apps, so this
+// works there too, not just on unlocked phones.
 export const MediaCapture = ({
   photos,
   onAddPhoto,
@@ -169,95 +177,22 @@ export const MediaCapture = ({
   maxPhotos = 5,
   label = "Photos",
 }) => {
-  // 'photo' | 'video' | null — which live camera view is open right now.
-  // Capturing directly in-page (rather than handing off to a separate
-  // Camera app) means this works correctly even on a locked-down kiosk
-  // tablet, where jumping to another app is blocked entirely.
-  const [mode, setMode] = useState(null);
   const [busyPhoto, setBusyPhoto] = useState(false);
   const [busyVideo, setBusyVideo] = useState(false);
-  const [recording, setRecording] = useState(false);
   const [err, setErr] = useState(null);
-  const [cameraErr, setCameraErr] = useState(null);
 
-  const videoElRef = useRef(null);
-  const streamRef = useRef(null);
-  const recorderRef = useRef(null);
-  const chunksRef = useRef([]);
+  const photoInputRef = useRef(null);
+  const videoInputRef = useRef(null);
 
-  // Start/stop the live camera feed whenever the preview opens or closes
-  useEffect(() => {
-    if (!mode) return;
-    let cancelled = false;
-
-    (async () => {
-      const videoConstraints = {
-        facingMode: "environment",
-        width: { ideal: 3840 },
-        height: { ideal: 2160 },
-      };
-      try {
-        setCameraErr(null);
-        let stream;
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: videoConstraints,
-            audio: mode === "video",
-          });
-        } catch (firstErr) {
-          if (mode === "video") {
-            // Camera+mic together failed — try video-only, so a
-            // microphone permission issue doesn't block video entirely
-            console.warn("Video+audio failed, retrying video-only:", firstErr);
-            stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
-          } else {
-            throw firstErr;
-          }
-        }
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        streamRef.current = stream;
-        if (videoElRef.current) {
-          videoElRef.current.srcObject = stream;
-        }
-      } catch (e) {
-        setCameraErr("Couldn't access the camera — check that camera permission is allowed for this app.");
-        console.error(e);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
-      }
-    };
-  }, [mode]);
-
-  const closePreview = () => {
-    setMode(null);
-    setRecording(false);
-    chunksRef.current = [];
-  };
-
-  const capturePhoto = async () => {
-    const videoEl = videoElRef.current;
-    if (!videoEl) return;
+  const handlePhotoSelected = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ""; // reset so picking the same file again still fires onChange
+    if (!file) return;
     setBusyPhoto(true);
     setErr(null);
     try {
-      const canvas = document.createElement("canvas");
-      canvas.width = videoEl.videoWidth;
-      canvas.height = videoEl.videoHeight;
-      canvas.getContext("2d").drawImage(videoEl, 0, 0);
-      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.95));
-      const file = new File([blob], `photo-${Date.now()}.jpg`, { type: "image/jpeg" });
       const url = await upload(file);
       onAddPhoto(url);
-      closePreview();
     } catch (ex) {
       setErr(ex.message || "Upload failed — check network and retry");
       console.error(ex);
@@ -266,122 +201,27 @@ export const MediaCapture = ({
     }
   };
 
-  const startRecording = () => {
-    if (!streamRef.current) return;
-    chunksRef.current = [];
-    const mimeType = MediaRecorder.isTypeSupported("video/mp4") ? "video/mp4" : "video/webm";
-    const recorder = new MediaRecorder(streamRef.current, { mimeType, videoBitsPerSecond: 4_000_000 });
-    recorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
-    };
-    recorder.onstop = async () => {
-      setBusyVideo(true);
-      setErr(null);
-      try {
-        const mimeType = MediaRecorder.isTypeSupported("video/mp4") ? "video/mp4" : "video/webm";
-        const ext = mimeType === "video/mp4" ? "mp4" : "webm";
-        const blob = new Blob(chunksRef.current, { type: mimeType });
-        const file = new File([blob], `video-${Date.now()}.${ext}`, { type: mimeType });
-        const url = await upload(file);
-        onSetVideo(url);
-        closePreview();
-      } catch (ex) {
-        setErr(ex.message || "Video upload failed — check network and retry");
-        console.error(ex);
-      } finally {
-        setBusyVideo(false);
-      }
-    };
-    recorderRef.current = recorder;
-    recorder.start();
-    setRecording(true);
-  };
-
-  const stopRecording = () => {
-    if (recorderRef.current && recorderRef.current.state !== "inactive") {
-      recorderRef.current.stop();
+  const handleVideoSelected = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setBusyVideo(true);
+    setErr(null);
+    try {
+      const url = await upload(file);
+      onSetVideo(url);
+    } catch (ex) {
+      setErr(ex.message || "Video upload failed — check network and retry");
+      console.error(ex);
+    } finally {
+      setBusyVideo(false);
     }
-    setRecording(false);
   };
 
   return (
     <div>
-      {mode && (
-        <div
-          style={{
-            position: "fixed", inset: 0, zIndex: 999, background: "#000",
-            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-          }}
-        >
-          {cameraErr ? (
-            <div style={{ color: "#fff", textAlign: "center", padding: 24 }}>
-              <div style={{ marginBottom: 16 }}>{cameraErr}</div>
-              <Btn kind="ghost" onClick={closePreview}>Close</Btn>
-            </div>
-          ) : (
-            <>
-              <video
-                ref={videoElRef}
-                autoPlay
-                playsInline
-                muted={mode === "photo"}
-                style={{ width: "100%", height: "100%", objectFit: "cover" }}
-              />
-              <div
-                style={{
-                  position: "absolute", bottom: 0, left: 0, right: 0,
-                  display: "flex", justifyContent: "center", alignItems: "center", gap: 20,
-                  padding: "24px 16px calc(24px + env(safe-area-inset-bottom, 0px))",
-                  background: "linear-gradient(transparent, rgba(0,0,0,0.6))",
-                }}
-              >
-                <button
-                  onClick={closePreview}
-                  style={{
-                    width: 48, height: 48, borderRadius: "50%", border: "2px solid #fff",
-                    background: "transparent", color: "#fff", fontSize: 18, cursor: "pointer",
-                  }}
-                >
-                  ✕
-                </button>
-                {mode === "photo" ? (
-                  <button
-                    onClick={capturePhoto}
-                    disabled={busyPhoto}
-                    style={{
-                      width: 74, height: 74, borderRadius: "50%", border: "4px solid #fff",
-                      background: busyPhoto ? "#999" : "#fff", cursor: busyPhoto ? "wait" : "pointer",
-                    }}
-                  />
-                ) : recording ? (
-                  <button
-                    onClick={stopRecording}
-                    style={{
-                      width: 74, height: 74, borderRadius: 14, border: "4px solid #fff",
-                      background: T.red, cursor: "pointer",
-                    }}
-                  />
-                ) : (
-                  <button
-                    onClick={startRecording}
-                    disabled={busyVideo}
-                    style={{
-                      width: 74, height: 74, borderRadius: "50%", border: "4px solid #fff",
-                      background: busyVideo ? "#999" : T.red, cursor: busyVideo ? "wait" : "pointer",
-                    }}
-                  />
-                )}
-                <div style={{ width: 48 }} />
-              </div>
-              {mode === "video" && recording && (
-                <div style={{ position: "absolute", top: 20, left: 0, right: 0, textAlign: "center", color: "#fff", fontWeight: 700 }}>
-                  ● Recording — tap the red square to stop
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
+      <input ref={photoInputRef} type="file" accept="image/*" onChange={handlePhotoSelected} style={{ display: "none" }} />
+      <input ref={videoInputRef} type="file" accept="video/*" onChange={handleVideoSelected} style={{ display: "none" }} />
 
       <div style={{ fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 6 }}>
         {label} ({photos.length}/{maxPhotos})
@@ -404,7 +244,7 @@ export const MediaCapture = ({
         ))}
         {photos.length < maxPhotos && (
           <button
-            onClick={() => !busyPhoto && setMode("photo")}
+            onClick={() => !busyPhoto && photoInputRef.current && photoInputRef.current.click()}
             style={{
               width: 54, height: 54, borderRadius: 8, border: `2px dashed ${T.ink}`,
               background: "#F5FBE6", color: T.ink, fontSize: busyPhoto ? 12 : 22, fontWeight: 700,
@@ -424,7 +264,7 @@ export const MediaCapture = ({
         </div>
       ) : (
         <button
-          onClick={() => !busyVideo && setMode("video")}
+          onClick={() => !busyVideo && videoInputRef.current && videoInputRef.current.click()}
           style={{
             padding: "9px 14px", borderRadius: 8, border: `2px dashed ${T.line}`, background: "#fff",
             color: T.mute, fontSize: 13, fontWeight: 700, cursor: busyVideo ? "wait" : "pointer", fontFamily: "inherit",

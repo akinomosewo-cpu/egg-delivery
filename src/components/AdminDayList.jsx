@@ -209,8 +209,9 @@ export default function AdminDayList({ drivers, customers, helpers, deliveries }
                           </a>
                         ))}
                         {d.video_url && (
-                          <a href={d.video_url} target="_blank" rel="noreferrer">
-                            <video src={d.video_url} style={{ width: 90, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }} muted />
+                          <a href={d.video_url} target="_blank" rel="noreferrer" style={{ position: "relative", display: "inline-block" }}>
+                            <video src={d.video_url} muted playsInline preload="metadata" style={{ width: 90, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}`, display: "block" }} />
+                            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.3)", borderRadius: 8, color: "#fff", fontSize: 20 }}>▶</div>
                           </a>
                         )}
                       </div>

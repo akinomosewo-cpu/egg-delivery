@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../supabase";
-import { T, Tag } from "./ui";
+import { T, Tag, fmtQty } from "./ui";
 
 const monthLabel = (ym) => {
   const [y, m] = ym.split("-").map(Number);
@@ -22,6 +22,7 @@ export default function AdminReports({ drivers, customers, helpers }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [expandedDriver, setExpandedDriver] = useState(null);
+  const [expandedItem, setExpandedItem] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -124,17 +125,91 @@ export default function AdminReports({ drivers, customers, helpers }) {
                 {open &&
                   items.map((r) => {
                     const hNames = (r.helper_ids || []).map(helperName);
+                    const rowOpen = expandedItem === r.id;
+                    const sizes = [
+                      ["Big large", r.big_large_delivered],
+                      ["Small large", r.small_large_delivered],
+                      ["Medium", r.medium_delivered],
+                      ["Pullet", r.pullet_delivered],
+                    ].filter(([, v]) => v > 0);
                     return (
-                      <div key={r.id} style={{ padding: "10px 14px", borderBottom: `1px solid ${T.line}` }}>
-                        <div style={{ display: "flex", justifyContent: "space-between" }}>
-                          <span style={{ fontWeight: 700, fontSize: 13 }}>{customerName(r.customer_id)}</span>
-                          <span style={{ fontSize: 12, color: T.mute }}>
-                            {new Date(r.delivery_date + "T00:00:00").toLocaleDateString("en-NG", { day: "numeric", month: "short" })}
-                          </span>
-                        </div>
-                        <div style={{ fontSize: 12, color: T.mute, marginTop: 2 }}>
-                          {r.crates_delivered} crates{hNames.length > 0 && ` · with ${hNames.join(", ")}`}
-                        </div>
+                      <div key={r.id} style={{ borderBottom: `1px solid ${T.line}` }}>
+                        <button
+                          onClick={() => setExpandedItem(rowOpen ? null : r.id)}
+                          style={{ width: "100%", textAlign: "left", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: "10px 14px" }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between" }}>
+                            <span style={{ fontWeight: 700, fontSize: 13 }}>{customerName(r.customer_id)}</span>
+                            <span style={{ fontSize: 12, color: T.mute }}>
+                              {new Date(r.delivery_date + "T00:00:00").toLocaleDateString("en-NG", { day: "numeric", month: "short" })}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 12, color: T.mute, marginTop: 2 }}>
+                            {r.crates_delivered} crates{hNames.length > 0 && ` · with ${hNames.join(", ")}`}
+                            {" · "}
+                            <span style={{ fontWeight: 700 }}>{rowOpen ? "▲ Hide details" : "▼ View details"}</span>
+                          </div>
+                        </button>
+
+                        {rowOpen && (
+                          <div style={{ padding: "0 14px 14px", fontSize: 13 }}>
+                            <div style={{ marginBottom: 6 }}>
+                              Assigned {fmtQty(r.crates_assigned, r.eggs_assigned)} · Delivered {r.crates_delivered || 0} crates
+                            </div>
+                            {sizes.length > 0 && (
+                              <div style={{ marginBottom: 6 }}>
+                                <b>Sizes:</b> {sizes.map(([label, v]) => `${label}: ${v}`).join(" · ")}
+                              </div>
+                            )}
+                            {Number(r.extra_delivered) > 0 && <div style={{ marginBottom: 6 }}>Extra delivered: {r.extra_delivered}</div>}
+                            {(Number(r.backorder_crates) > 0 || Number(r.empty_crates_picked_up) > 0 || Number(r.empty_crates_left) > 0) && (
+                              <div style={{ marginBottom: 6, fontWeight: 700 }}>
+                                {Number(r.backorder_crates) > 0 && <div style={{ color: T.red }}>{r.backorder_crates} crate(s) backordered</div>}
+                                {Number(r.empty_crates_picked_up) > 0 && <div>Empty crates picked up: {r.empty_crates_picked_up}</div>}
+                                {Number(r.empty_crates_left) > 0 && <div style={{ color: T.red }}>{r.empty_crates_left} empty crate(s) left with customer</div>}
+                              </div>
+                            )}
+                            {(Number(r.missing_crates) > 0 || Number(r.missing_eggs) > 0) && (
+                              <div style={{ marginBottom: 6, fontWeight: 700, color: r.missing_crates_resolved ? T.green : T.red }}>
+                                {r.missing_crates || 0} crate(s) missing · {r.missing_eggs || 0} egg(s) cracked
+                                {r.missing_crates_resolved && " (collected back)"}
+                              </div>
+                            )}
+                            {Number(r.price_due) > 0 && (
+                              <div style={{ marginBottom: 6 }}>
+                                Price: ₦{Number(r.price_due).toLocaleString("en-NG")} · Collected: ₦{Number(r.payment_collected || 0).toLocaleString("en-NG")}
+                              </div>
+                            )}
+                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                              {(r.photo_urls || []).map((p, i) => (
+                                <a key={i} href={p} target="_blank" rel="noreferrer">
+                                  <img src={p} alt="" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6, border: `1px solid ${T.line}` }} />
+                                </a>
+                              ))}
+                              {r.video_url && (
+                                <a href={r.video_url} target="_blank" rel="noreferrer" style={{ position: "relative", display: "inline-block" }}>
+                                  <video src={r.video_url} muted playsInline preload="metadata" style={{ width: 80, height: 48, objectFit: "cover", borderRadius: 6, border: `1px solid ${T.line}`, display: "block" }} />
+                                  <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.3)", borderRadius: 6, color: "#fff", fontSize: 18 }}>▶</div>
+                                </a>
+                              )}
+                              {r.video_url && (
+                                <a href={r.video_url} target="_blank" rel="noreferrer">
+                                  <video src={r.video_url} style={{ width: 80, height: 48, objectFit: "cover", borderRadius: 6, border: `1px solid ${T.line}` }} muted />
+                                </a>
+                              )}
+                              {r.signature_url && (
+                                <a href={r.signature_url} target="_blank" rel="noreferrer">
+                                  <img src={r.signature_url} alt="signature" style={{ width: 90, height: 40, objectFit: "contain", background: "#fff", borderRadius: 6, border: `1px solid ${T.line}` }} />
+                                </a>
+                              )}
+                              {r.receipt_url && (
+                                <a href={r.receipt_url} target="_blank" rel="noreferrer">
+                                  <img src={r.receipt_url} alt="receipt" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6, border: `1px solid ${T.line}` }} />
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}

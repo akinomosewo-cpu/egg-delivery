@@ -27,6 +27,7 @@ export default function DriverApp({
   helpers,
   deliveries,
   openDebts,
+  allDeliveries,
   claimDelivery,
   unclaimDelivery,
   updateStatus,
@@ -460,7 +461,7 @@ export default function DriverApp({
                         { driver_id: driverId, customer_id: stop.customer_id }
                       );
                     } else {
-                      await submitPartialDelivery(stop.id, thisVisit, stopPhotos, crateExchange, {
+                      await submitPartialDelivery(stop.id, thisVisit, stopPhotos, stopVideo, crateExchange, {
                         driver_id: driverId,
                         customer_id: stop.customer_id,
                       });
@@ -498,6 +499,37 @@ export default function DriverApp({
   }
 
   // ---- Main screen: available pool + my claimed route ----
+  const crateIssues = (() => {
+    const byCustomer = {};
+    openDebts
+      .filter((d) => d.driver_id === driverId)
+      .forEach((d) => {
+        const key = d.customer_id;
+        if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, backorder: 0, emptyLeft: 0, emptyLeftDate: null };
+        byCustomer[key].owed += Number(d.missing_crates || 0);
+      });
+    (allDeliveries || [])
+      .filter((d) => d.driver_id === driverId)
+      .forEach((d) => {
+        const key = d.customer_id;
+        if (Number(d.backorder_crates || 0) > 0) {
+          if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, backorder: 0, emptyLeft: 0, emptyLeftDate: null };
+          byCustomer[key].backorder += Number(d.backorder_crates);
+        }
+        if (Number(d.empty_crates_left || 0) > 0) {
+          if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, backorder: 0, emptyLeft: 0, emptyLeftDate: null };
+          // keep only the most recent stop's snapshot for this customer
+          if (!byCustomer[key].emptyLeftDate || d.delivery_date > byCustomer[key].emptyLeftDate) {
+            byCustomer[key].emptyLeft = Number(d.empty_crates_left);
+            byCustomer[key].emptyLeftDate = d.delivery_date;
+          }
+        }
+      });
+    return Object.values(byCustomer)
+      .map((c) => ({ ...c, name: (customers.find((x) => x.id === c.customerId) || {}).name || "a customer" }))
+      .filter((c) => c.owed > 0 || c.backorder > 0 || c.emptyLeft > 0);
+  })();
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -506,6 +538,20 @@ export default function DriverApp({
           Switch
         </Btn>
       </div>
+
+      {crateIssues.length > 0 && (
+        <div style={{ background: "#FBEAE6", border: `1.5px solid ${T.red}`, borderRadius: 12, padding: "12px 14px" }}>
+          <div style={{ fontWeight: 800, color: T.red, fontSize: 14, marginBottom: 6 }}>⚠ Crates owed / missing</div>
+          {crateIssues.map((c) => (
+            <div key={c.customerId} style={{ fontSize: 13, color: T.red, fontWeight: 600, marginTop: 2 }}>
+              {c.name}
+              {c.owed > 0 && ` · ${c.owed} crate${c.owed !== 1 ? "s" : ""} owed back`}
+              {c.backorder > 0 && ` · ${c.backorder} backordered`}
+              {c.emptyLeft > 0 && ` · ${c.emptyLeft} empty crate${c.emptyLeft !== 1 ? "s" : ""} left`}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Available pool */}
       <div>
