@@ -1,5 +1,62 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase, today, logEvent, requestNotificationPermission, notify } from "./supabase";
+
+// Sends an SMS via EbulkSMS. Fails silently (logs to console) so a
+// notification hiccup never blocks the actual delivery save — the crates
+// still got delivered either way.
+const EBULKSMS_USERNAME = import.meta.env.VITE_EBULKSMS_USERNAME; // your EbulkSMS login email
+const EBULKSMS_APIKEY = import.meta.env.VITE_EBULKSMS_APIKEY;
+const EBULKSMS_SENDER_ID = import.meta.env.VITE_EBULKSMS_SENDER_ID || "COSNG";
+const EBULKSMS_URL = "https://api.ebulksms.com/sendsms.json";
+
+// Converts a Nigerian number to the 234... international format EbulkSMS
+// expects, whether it was saved as 0803..., +234803..., or 234803... already.
+function toEbulkSmsFormat(phone) {
+  const digits = phone.replace(/\D/g, "");
+  if (digits.startsWith("234")) return digits;
+  if (digits.startsWith("0")) return "234" + digits.slice(1);
+  return digits;
+}
+
+async function sendSMS(recipient, message) {
+  if (!EBULKSMS_USERNAME || !EBULKSMS_APIKEY || !recipient) return;
+  try {
+    const res = await fetch(EBULKSMS_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        SMS: {
+          auth: {
+            username: EBULKSMS_USERNAME,
+            apikey: EBULKSMS_APIKEY,
+          },
+          message: {
+            sender: EBULKSMS_SENDER_ID,
+            messagetext: message,
+            flash: "0",
+          },
+          recipients: {
+            gsm: [
+              {
+                msidn: toEbulkSmsFormat(recipient),
+                msgid: `del_${Date.now()}`,
+              },
+            ],
+          },
+          dndsender: 1, // deliver to MTN DND numbers too (2 units instead of 1)
+        },
+      }),
+    });
+    const data = await res.json();
+    if (data?.response?.status !== "SUCCESS") {
+      console.warn("SMS not sent:", data);
+    }
+  } catch (e) {
+    console.warn("SMS send failed:", e);
+  }
+}
 import { queueAction, getQueuedActions, removeQueuedAction, queueCount, looksOffline } from "./offlineQueue";
 import { T } from "./components/ui";
 import AdminPlan from "./components/AdminPlan";
@@ -369,8 +426,17 @@ export default function App() {
       return;
     }
     await logEvent({ driver_id: ctx.driver_id, customer_id: ctx.customer_id, delivery_id: id, event_type: "delivered" });
-    loadAll();
 
+    // Notify the customer by SMS, if we have their phone number on file
+    const cust = customers.find((c) => c.id === ctx.customer_id);
+    if (cust && cust.phone) {
+      sendSMS(
+        cust.phone,
+        `${EBULKSMS_SENDER_ID}: Your order has been delivered — ${finalCrates} crate${finalCrates !== 1 ? "s" : ""}. Thank you for your order!`
+      );
+    }
+
+    loadAll();
   };
 
   const addDriver = async (name) => {
