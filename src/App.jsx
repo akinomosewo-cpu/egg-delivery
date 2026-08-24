@@ -59,6 +59,7 @@ async function sendSMS(recipient, message) {
 }
 import { queueAction, getQueuedActions, removeQueuedAction, queueCount, looksOffline } from "./offlineQueue";
 import { T } from "./components/ui";
+import TrackDelivery from "./components/TrackDelivery";
 import AdminPlan from "./components/AdminPlan";
 import AdminDashboard from "./components/AdminDashboard";
 import AdminManage from "./components/AdminManage";
@@ -75,6 +76,14 @@ import DriverApp from "./components/DriverApp";
 const ADMIN_PIN = "8791"; // change this to change the admin password
 
 export default function App() {
+  // Public, no-login tracking link a customer gets via SMS. Checked before
+  // any of the app's own state/hooks run, since this is a completely
+  // separate, unauthenticated page — not a tab within the admin/driver app.
+  if (window.location.pathname.startsWith("/track/")) {
+    const token = window.location.pathname.split("/track/")[1];
+    return <TrackDelivery token={token} />;
+  }
+
   const [device, setDevice] = useState("driver"); // driver-first: workers open this most
   const [adminTab, setAdminTab] = useState("plan");
   const [moreOpen, setMoreOpen] = useState(false);
@@ -320,7 +329,15 @@ export default function App() {
   // queues automatically and sends itself once signal comes back.
   const runUpdateStatus = async (id, status, ctx) => {
     const timeCol = status === "in_transit" ? { started_at: new Date().toISOString() } : status === "arrived" ? { arrived_at: new Date().toISOString() } : {};
-    const { error } = await supabase.from("deliveries").update({ status, ...timeCol }).eq("id", id);
+    const extra = {};
+    if (status === "in_transit") {
+      // A fresh random token per trip — the tracking link only works while
+      // this delivery is actively on the way, and stops working the moment
+      // it's marked delivered (the lookup simply returns nothing then, so
+      // there's no separate "expire" step needed).
+      extra.tracking_token = `${id}-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
+    }
+    const { error } = await supabase.from("deliveries").update({ status, ...timeCol, ...extra }).eq("id", id);
     if (error) throw error;
     await logEvent({
       driver_id: ctx.driver_id,
@@ -328,6 +345,14 @@ export default function App() {
       delivery_id: id,
       event_type: status === "in_transit" ? "route_started" : "arrived",
     });
+
+    if (status === "in_transit") {
+      const cust = customers.find((c) => c.id === ctx.customer_id);
+      if (cust && cust.phone) {
+        const trackUrl = `${window.location.origin}/track/${extra.tracking_token}`;
+        sendSMS(cust.phone, `${EBULKSMS_SENDER_ID}: Your driver is on the way! Track live here: ${trackUrl}`);
+      }
+    }
   };
 
   const updateStatus = async (id, status, ctx) => {
