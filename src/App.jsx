@@ -19,7 +19,11 @@ function toEbulkSmsFormat(phone) {
 }
 
 async function sendSMS(recipient, message) {
-  if (!EBULKSMS_USERNAME || !EBULKSMS_APIKEY || !recipient) return;
+  console.log("[SMS] attempt", { recipient, hasUsername: !!EBULKSMS_USERNAME, hasApikey: !!EBULKSMS_APIKEY });
+  if (!EBULKSMS_USERNAME || !EBULKSMS_APIKEY || !recipient) {
+    console.log("[SMS] skipped — missing username/apikey/recipient");
+    return;
+  }
   try {
     const res = await fetch(EBULKSMS_URL, {
       method: "POST",
@@ -49,7 +53,9 @@ async function sendSMS(recipient, message) {
         },
       }),
     });
+    console.log("[SMS] HTTP status", res.status);
     const data = await res.json();
+    console.log("[SMS] response body", data);
     if (data?.response?.status !== "SUCCESS") {
       console.warn("SMS not sent:", data);
     }
