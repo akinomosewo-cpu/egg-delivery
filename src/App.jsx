@@ -406,6 +406,15 @@ export default function App() {
       return;
     }
     await logEvent({ driver_id: ctx.driver_id, customer_id: ctx.customer_id, delivery_id: id, event_type: "partial_delivered" });
+
+    const cust = customers.find((c) => c.id === ctx.customer_id);
+    if (cust && cust.phone) {
+      sendSMS(
+        cust.phone,
+        `${EBULKSMS_SENDER_ID}: Part of your order has been delivered — ${newTotal} crate${newTotal !== 1 ? "s" : ""} so far. The rest will follow.`
+      );
+    }
+
     loadAll();
   };
 
