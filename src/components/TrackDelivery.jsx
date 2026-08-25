@@ -39,7 +39,12 @@ export default function TrackDelivery({ token }) {
     const load = async () => {
       const { data, error } = await supabase.rpc("get_tracking_info", { p_token: token });
       if (cancelled) return;
-      if (error || !data || data.length === 0) {
+      if (error) {
+        console.error("[TrackDelivery] RPC error:", error);
+        setInfo(null);
+        return;
+      }
+      if (!data || data.length === 0) {
         setInfo(null);
         return;
       }
