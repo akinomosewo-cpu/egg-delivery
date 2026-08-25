@@ -1,57 +1,28 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase, today, logEvent, requestNotificationPermission, notify } from "./supabase";
 
-// Sends an SMS via EbulkSMS. Fails silently (logs to console) so a
+// Sends an SMS through our own /api/send-sms serverless function, which
+// calls EbulkSMS server-side. Calling EbulkSMS directly from the browser
+// fails with a CORS error — their API is built for server-side (PHP) use,
+// not direct client-side JavaScript — so this proxy exists specifically to
+// route around that, and as a bonus keeps the API key out of the public
+// client bundle entirely. Fails silently (logs to console) so a
 // notification hiccup never blocks the actual delivery save — the crates
 // still got delivered either way.
-const EBULKSMS_USERNAME = import.meta.env.VITE_EBULKSMS_USERNAME; // your EbulkSMS login email
-const EBULKSMS_APIKEY = import.meta.env.VITE_EBULKSMS_APIKEY;
-const EBULKSMS_SENDER_ID = import.meta.env.VITE_EBULKSMS_SENDER_ID || "COSNG";
-const EBULKSMS_URL = "https://api.ebulksms.com/sendsms.json";
-
-// Converts a Nigerian number to the 234... international format EbulkSMS
-// expects, whether it was saved as 0803..., +234803..., or 234803... already.
-function toEbulkSmsFormat(phone) {
-  const digits = phone.replace(/\D/g, "");
-  if (digits.startsWith("234")) return digits;
-  if (digits.startsWith("0")) return "234" + digits.slice(1);
-  return digits;
-}
+const SMS_ENDPOINT = `${window.location.origin}/api/send-sms`;
+const EBULKSMS_SENDER_ID = import.meta.env.VITE_EBULKSMS_SENDER_ID || "COSNG"; // not secret, just shown to customers
 
 async function sendSMS(recipient, message) {
-  console.log("[SMS] attempt", { recipient, hasUsername: !!EBULKSMS_USERNAME, hasApikey: !!EBULKSMS_APIKEY });
-  if (!EBULKSMS_USERNAME || !EBULKSMS_APIKEY || !recipient) {
-    console.log("[SMS] skipped — missing username/apikey/recipient");
+  console.log("[SMS] attempt", { recipient });
+  if (!recipient) {
+    console.log("[SMS] skipped — no recipient");
     return;
   }
   try {
-    const res = await fetch(EBULKSMS_URL, {
+    const res = await fetch(SMS_ENDPOINT, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        SMS: {
-          auth: {
-            username: EBULKSMS_USERNAME,
-            apikey: EBULKSMS_APIKEY,
-          },
-          message: {
-            sender: EBULKSMS_SENDER_ID,
-            messagetext: message,
-            flash: "0",
-          },
-          recipients: {
-            gsm: [
-              {
-                msidn: toEbulkSmsFormat(recipient),
-                msgid: `del_${Date.now()}`,
-              },
-            ],
-          },
-          dndsender: 1, // deliver to MTN DND numbers too (2 units instead of 1)
-        },
-      }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ recipient, message }),
     });
     console.log("[SMS] HTTP status", res.status);
     const data = await res.json();
