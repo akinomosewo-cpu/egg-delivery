@@ -9,7 +9,10 @@ import { supabase, today, logEvent, requestNotificationPermission, notify } from
 // client bundle entirely. Fails silently (logs to console) so a
 // notification hiccup never blocks the actual delivery save — the crates
 // still got delivered either way.
-const SMS_ENDPOINT = `${window.location.origin}/api/send-sms`;
+// NOT window.location.origin — inside the native driver app that's a local
+// sandbox address (like https://localhost), not the real deployed site,
+// which would make every SMS call silently fail to reach the real endpoint.
+const SMS_ENDPOINT = "https://egg-delivery-nu.vercel.app/api/send-sms";
 const EBULKSMS_SENDER_ID = import.meta.env.VITE_EBULKSMS_SENDER_ID || "COSNG"; // not secret, just shown to customers
 
 async function sendSMS(recipient, message) {
@@ -330,7 +333,10 @@ export default function App() {
     if (status === "in_transit") {
       const cust = customers.find((c) => c.id === ctx.customer_id);
       if (cust && cust.phone) {
-        const trackUrl = `${window.location.origin}/track/${extra.tracking_token}`;
+        // NOT window.location.origin — inside the native driver app that's a
+        // local sandbox address (like https://localhost), not the real
+        // public site, which produced broken links in real SMS messages.
+        const trackUrl = `https://egg-delivery-nu.vercel.app/track/${extra.tracking_token}`;
         sendSMS(cust.phone, `${EBULKSMS_SENDER_ID}: Your driver is on the way! Track live here: ${trackUrl}`);
       }
     }
