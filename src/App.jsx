@@ -312,7 +312,11 @@ export default function App() {
       // this delivery is actively on the way, and stops working the moment
       // it's marked delivered (the lookup simply returns nothing then, so
       // there's no separate "expire" step needed).
-      extra.tracking_token = `${id}-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
+      // Short on purpose — a long token risks the SMS splitting into
+      // multiple segments, which can scramble a URL depending on how the
+      // carrier reassembles them. This doesn't need to embed the delivery
+      // id at all; the token alone is enough to look the delivery up.
+      extra.tracking_token = Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-6);
     }
     const { error } = await supabase.from("deliveries").update({ status, ...timeCol, ...extra }).eq("id", id);
     if (error) throw error;
