@@ -1,45 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase, today, logEvent, requestNotificationPermission, notify } from "./supabase";
-
-// Sends an SMS through our own /api/send-sms serverless function, which
-// calls EbulkSMS server-side. Calling EbulkSMS directly from the browser
-// fails with a CORS error — their API is built for server-side (PHP) use,
-// not direct client-side JavaScript — so this proxy exists specifically to
-// route around that, and as a bonus keeps the API key out of the public
-// client bundle entirely. Fails silently (logs to console) so a
-// notification hiccup never blocks the actual delivery save — the crates
-// still got delivered either way.
-// NOT window.location.origin — inside the native driver app that's a local
-// sandbox address (like https://localhost), not the real deployed site,
-// which would make every SMS call silently fail to reach the real endpoint.
-const SMS_ENDPOINT = "https://egg-delivery-nu.vercel.app/api/send-sms";
-const EBULKSMS_SENDER_ID = import.meta.env.VITE_EBULKSMS_SENDER_ID || "COSNG"; // not secret, just shown to customers
-
-async function sendSMS(recipient, message) {
-  console.log("[SMS] attempt", { recipient });
-  if (!recipient) {
-    console.log("[SMS] skipped — no recipient");
-    return;
-  }
-  try {
-    const res = await fetch(SMS_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ recipient, message }),
-    });
-    console.log("[SMS] HTTP status", res.status);
-    const data = await res.json();
-    console.log("[SMS] response body", data);
-    if (data?.response?.status !== "SUCCESS") {
-      console.warn("SMS not sent:", data);
-    }
-  } catch (e) {
-    console.warn("SMS send failed:", e);
-  }
-}
 import { queueAction, getQueuedActions, removeQueuedAction, queueCount, looksOffline } from "./offlineQueue";
 import { T } from "./components/ui";
-import TrackDelivery from "./components/TrackDelivery";
 import AdminPlan from "./components/AdminPlan";
 import AdminDashboard from "./components/AdminDashboard";
 import AdminManage from "./components/AdminManage";
@@ -56,14 +18,6 @@ import DriverApp from "./components/DriverApp";
 const ADMIN_PIN = "8791"; // change this to change the admin password
 
 export default function App() {
-  // Public, no-login tracking link a customer gets via SMS. Checked before
-  // any of the app's own state/hooks run, since this is a completely
-  // separate, unauthenticated page — not a tab within the admin/driver app.
-  if (window.location.pathname.startsWith("/track/")) {
-    const token = window.location.pathname.split("/track/")[1];
-    return <TrackDelivery token={token} />;
-  }
-
   const [device, setDevice] = useState("driver"); // driver-first: workers open this most
   const [adminTab, setAdminTab] = useState("plan");
   const [moreOpen, setMoreOpen] = useState(false);
@@ -101,7 +55,7 @@ export default function App() {
         supabase.from("deliveries").select("*").gt("missing_crates", 0).eq("missing_crates_resolved", false).order("delivery_date"),
         supabase.from("driver_locations").select("*"),
         supabase.from("stock_entries").select("*"),
-        supabase.from("deliveries").select("id, driver_id, customer_id, crates_assigned, price_due, payment_collected, missing_crates, missing_crates_resolved, backorder_crates, empty_crates_left, delivery_date"), // all-time — used for stock math, customer balances, and driver crate-issue banner
+        supabase.from("deliveries").select("customer_id, crates_assigned, price_due, payment_collected, missing_crates, missing_crates_resolved, backorder_crates, empty_crates_left, delivery_date"), // all-time — used for stock math and customer balances
         supabase.from("stock_counts").select("*").order("created_at", { ascending: false }).limit(50),
         supabase.from("customer_payments").select("*").order("created_at", { ascending: false }),
       ]);
@@ -309,19 +263,7 @@ export default function App() {
   // queues automatically and sends itself once signal comes back.
   const runUpdateStatus = async (id, status, ctx) => {
     const timeCol = status === "in_transit" ? { started_at: new Date().toISOString() } : status === "arrived" ? { arrived_at: new Date().toISOString() } : {};
-    const extra = {};
-    if (status === "in_transit") {
-      // A fresh random token per trip — the tracking link only works while
-      // this delivery is actively on the way, and stops working the moment
-      // it's marked delivered (the lookup simply returns nothing then, so
-      // there's no separate "expire" step needed).
-      // Short on purpose — a long token risks the SMS splitting into
-      // multiple segments, which can scramble a URL depending on how the
-      // carrier reassembles them. This doesn't need to embed the delivery
-      // id at all; the token alone is enough to look the delivery up.
-      extra.tracking_token = Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-6);
-    }
-    const { error } = await supabase.from("deliveries").update({ status, ...timeCol, ...extra }).eq("id", id);
+    const { error } = await supabase.from("deliveries").update({ status, ...timeCol }).eq("id", id);
     if (error) throw error;
     await logEvent({
       driver_id: ctx.driver_id,
@@ -329,17 +271,6 @@ export default function App() {
       delivery_id: id,
       event_type: status === "in_transit" ? "route_started" : "arrived",
     });
-
-    if (status === "in_transit") {
-      const cust = customers.find((c) => c.id === ctx.customer_id);
-      if (cust && cust.phone) {
-        // NOT window.location.origin — inside the native driver app that's a
-        // local sandbox address (like https://localhost), not the real
-        // public site, which produced broken links in real SMS messages.
-        const trackUrl = `https://egg-delivery-nu.vercel.app/track/${extra.tracking_token}`;
-        sendSMS(cust.phone, `${EBULKSMS_SENDER_ID}: Your driver is on the way! Track live here: ${trackUrl}`);
-      }
-    }
   };
 
   const updateStatus = async (id, status, ctx) => {
@@ -363,10 +294,10 @@ export default function App() {
 
   // Save a partial drop-off (driver couldn't carry the full order in one trip).
   // Accumulates onto whatever's already been delivered so far; does NOT complete the delivery.
-  const submitPartialDelivery = async (id, addedCrates, newPhotos, newVideo, crateExchange, ctx) => {
+  const submitPartialDelivery = async (id, addedCrates, newPhotos, crateExchange, ctx) => {
     const { data: cur, error: e1 } = await supabase
       .from("deliveries")
-      .select("crates_delivered, photo_urls, video_url, backorder_crates, empty_crates_picked_up, empty_crates_left, extra_delivered")
+      .select("crates_delivered, photo_urls, backorder_crates, empty_crates_picked_up, empty_crates_left, extra_delivered")
       .eq("id", id)
       .single();
     if (e1) {
@@ -380,7 +311,6 @@ export default function App() {
       .update({
         crates_delivered: newTotal,
         photo_urls: mergedPhotos,
-        video_url: newVideo || cur.video_url,
         status: "arrived",
         extra_delivered: (cur.extra_delivered || 0) + Number(crateExchange?.extra || 0),
         backorder_crates: (cur.backorder_crates || 0) + Number(crateExchange?.backorder || 0),
@@ -393,15 +323,6 @@ export default function App() {
       return;
     }
     await logEvent({ driver_id: ctx.driver_id, customer_id: ctx.customer_id, delivery_id: id, event_type: "partial_delivered" });
-
-    const cust = customers.find((c) => c.id === ctx.customer_id);
-    if (cust && cust.phone) {
-      sendSMS(
-        cust.phone,
-        `${EBULKSMS_SENDER_ID}: Part of your order has been delivered — ${newTotal} crate${newTotal !== 1 ? "s" : ""} so far. The rest will follow.`
-      );
-    }
-
     loadAll();
   };
 
@@ -409,7 +330,7 @@ export default function App() {
   const markDelivered = async (id, addedCrates, photoUrls, videoUrl, missingEggs, missingCrates, signatureUrl, sizes, payment, receiptUrl, crateExchange, ctx) => {
     const { data: cur, error: e1 } = await supabase
       .from("deliveries")
-      .select("crates_delivered, photo_urls, video_url, backorder_crates, empty_crates_picked_up, extra_delivered")
+      .select("crates_delivered, photo_urls, backorder_crates, empty_crates_picked_up, extra_delivered")
       .eq("id", id)
       .single();
     if (e1) {
@@ -425,7 +346,7 @@ export default function App() {
         crates_delivered: finalCrates,
         eggs_delivered: 0,
         photo_urls: mergedPhotos,
-        video_url: videoUrl || cur.video_url,
+        video_url: videoUrl,
         missing_eggs: missingEggs,
         missing_crates: missingCrates,
         signature_url: signatureUrl,
@@ -447,17 +368,8 @@ export default function App() {
       return;
     }
     await logEvent({ driver_id: ctx.driver_id, customer_id: ctx.customer_id, delivery_id: id, event_type: "delivered" });
-
-    // Notify the customer by SMS, if we have their phone number on file
-    const cust = customers.find((c) => c.id === ctx.customer_id);
-    if (cust && cust.phone) {
-      sendSMS(
-        cust.phone,
-        `${EBULKSMS_SENDER_ID}: Your order has been delivered — ${finalCrates} crate${finalCrates !== 1 ? "s" : ""}. Thank you for your order!`
-      );
-    }
-
     loadAll();
+
   };
 
   const addDriver = async (name) => {
@@ -967,7 +879,6 @@ export default function App() {
             helpers={helpers}
             deliveries={deliveries}
             openDebts={openDebts}
-            allDeliveries={allDeliveriesForStock}
             claimDelivery={claimDelivery}
             unclaimDelivery={unclaimDelivery}
             updateStatus={updateStatus}
@@ -982,6 +893,7 @@ export default function App() {
               stockEntries.reduce((s, e) => s + Number(e.amount || 0), 0) -
               allDeliveriesForStock.reduce((s, d) => s + Number(d.crates_assigned || 0), 0)
             }
+            allDeliveries={allDeliveriesForStock}
           />
         )}
       </div>
