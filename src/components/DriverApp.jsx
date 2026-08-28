@@ -34,6 +34,7 @@ export default function DriverApp({
   markDelivered,
   resolveMissingCrates,
   collectMissingCrates,
+  collectEmptyCrates,
   updateDriverLocation,
   addStockCount,
   stockCounts,
@@ -59,6 +60,7 @@ export default function DriverApp({
   const [receiptPhoto, setReceiptPhoto] = useState(null);
   const [busy, setBusy] = useState(false);
   const [collectingDebtId, setCollectingDebtId] = useState(null);
+  const [collectingDebtType, setCollectingDebtType] = useState(null); // "missing" | "empty"
   const [collectAmount, setCollectAmount] = useState("");
   const [collectPhoto, setCollectPhoto] = useState(null);
   const [stockForm, setStockForm] = useState({
@@ -68,15 +70,35 @@ export default function DriverApp({
   const [stockBusy, setStockBusy] = useState(false);
 
   // Shared card for a single open crate debt — used both in the top
+<<<<<<< HEAD
   // summary banner and the detailed list further down, so both spots
   // render the exact same evidence-capture flow consistently.
   const renderDebtCard = (debt) => {
+=======
+  // banner and the detailed list further down, so the same photo+amount
+  // evidence flow is available everywhere, regardless of which driver
+  // originally created the debt. `kind` distinguishes a missing-crates debt
+  // from an empty-crates-left debt, since both key off a delivery id and
+  // could otherwise collide in the collectingDebtId/collectingDebtType state.
+  const renderDebtCard = (debt, busyState, setBusyState, kind = "missing") => {
+>>>>>>> 58dfcdd4fe13ab634af76f225e813d3dfa43ca24
     const c = customers.find((x) => x.id === debt.customer_id);
-    const isCollecting = collectingDebtId === debt.id;
+    const isCollecting = collectingDebtId === debt.id && collectingDebtType === kind;
+    const owed = kind === "missing" ? debt.missing_crates : debt.empty_crates_left;
+    const collectFn = kind === "missing" ? collectMissingCrates : collectEmptyCrates;
+    const label = kind === "missing" ? "Collected the crates" : "Picked up the empty crates";
+    const owedText = kind === "missing" ? `Owes ${owed} crate${owed !== 1 ? "s" : ""}` : `${owed} empty crate${owed !== 1 ? "s" : ""} left there`;
     return (
+<<<<<<< HEAD
       <div key={debt.id} style={{ background: "#FBEAE6", border: `1.5px solid ${T.red}`, borderRadius: 10, padding: 12 }}>
         <div style={{ fontSize: 12, color: T.mute, marginBottom: 8 }}>
           {c ? c.name : "…"} owes {debt.missing_crates} crate{debt.missing_crates !== 1 ? "s" : ""}
+=======
+      <div key={debt.id} style={{ background: "#FBEAE6", border: `1.5px solid ${T.red}`, borderRadius: 12, padding: 14 }}>
+        <div style={{ fontWeight: 800, fontSize: 14 }}>{c ? c.name : "…"}</div>
+        <div style={{ fontSize: 12, color: T.mute, marginBottom: 10 }}>
+          {owedText}
+>>>>>>> 58dfcdd4fe13ab634af76f225e813d3dfa43ca24
           {c && c.area ? ` · ${c.area}` : ""}
         </div>
 
@@ -87,17 +109,18 @@ export default function DriverApp({
             kind="green"
             onClick={() => {
               setCollectingDebtId(debt.id);
+              setCollectingDebtType(kind);
               setCollectAmount("");
               setCollectPhoto(null);
             }}
           >
-            Collected the crates
+            {label}
           </Btn>
         ) : (
           <div style={{ background: "#fff", borderRadius: 10, padding: 12, border: `1.5px solid ${T.line}` }}>
             <div style={{ marginBottom: 10 }}>
               <NumInput
-                label={`How many crates? (${debt.missing_crates} owed)`}
+                label={`How many crates? (${owed} owed)`}
                 value={collectAmount}
                 onChange={setCollectAmount}
                 width={120}
@@ -117,7 +140,7 @@ export default function DriverApp({
               />
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <Btn kind="ghost" small onClick={() => setCollectingDebtId(null)}>
+              <Btn kind="ghost" small onClick={() => { setCollectingDebtId(null); setCollectingDebtType(null); }}>
                 Cancel
               </Btn>
               <Btn
@@ -126,10 +149,17 @@ export default function DriverApp({
                 full
                 disabled={busy || collectAmount === "" || Number(collectAmount) <= 0 || !collectPhoto}
                 onClick={async () => {
+<<<<<<< HEAD
                   setBusy(true);
                   await collectMissingCrates(debt.id, driverId, Number(collectAmount), collectPhoto);
                   setBusy(false);
+=======
+                  setBusyState(true);
+                  await collectFn(debt.id, driverId, Number(collectAmount), collectPhoto);
+                  setBusyState(false);
+>>>>>>> 58dfcdd4fe13ab634af76f225e813d3dfa43ca24
                   setCollectingDebtId(null);
+                  setCollectingDebtType(null);
                   setCollectAmount("");
                   setCollectPhoto(null);
                 }}
@@ -212,6 +242,14 @@ export default function DriverApp({
   }
 
   const drv = drivers.find((d) => d.id === driverId);
+  // Helpers already riding with another driver on an unfinished delivery — hide them
+  // from the picker so two drivers can't claim the same helper at once.
+  const busyHelperIds = new Set(
+    deliveries
+      .filter((d) => d.driver_id && d.driver_id !== driverId && d.status !== "delivered")
+      .flatMap((d) => d.helper_ids || [])
+  );
+  const pickableHelpers = helpers.filter((h) => !busyHelperIds.has(h.id));
   const available = deliveries.filter((d) => !d.driver_id && d.status === "pending");
   const myStops = deliveries.filter((d) => d.driver_id === driverId);
   const pending = myStops.filter((d) => d.status !== "delivered");
@@ -257,13 +295,15 @@ export default function DriverApp({
           <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
             Bringing anyone with you? (up to 2, optional)
           </div>
-          {helpers.length === 0 ? (
+          {pickableHelpers.length === 0 ? (
             <div style={{ fontSize: 13, color: T.mute, marginBottom: 16 }}>
-              No helpers added yet — ask the Admin to add names in Manage.
+              {helpers.length === 0
+                ? "No helpers added yet — ask the Admin to add names in Manage."
+                : "Everyone's out with another driver right now."}
             </div>
           ) : (
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 18 }}>
-              {helpers.map((h) => {
+              {pickableHelpers.map((h) => {
                 const picked = pickedHelpers.includes(h.id);
                 const busy = busyHelperIds.has(h.id);
                 return (
@@ -589,6 +629,7 @@ export default function DriverApp({
   // ---- Main screen: available pool + my claimed route ----
   const crateIssues = (() => {
     const byCustomer = {};
+<<<<<<< HEAD
     openDebts.forEach((d) => {
       const key = d.customer_id;
       if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, owedDeliveryIds: [], backorder: 0, emptyLeft: 0, emptyLeftDate: null };
@@ -609,6 +650,32 @@ export default function DriverApp({
         }
       }
     });
+=======
+    openDebts
+      .forEach((d) => {
+        const key = d.customer_id;
+        if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, owedDeliveryIds: [], backorder: 0, emptyLeft: 0, emptyLeftDate: null, emptyLeftDeliveryId: null };
+        byCustomer[key].owed += Number(d.missing_crates || 0);
+        byCustomer[key].owedDeliveryIds.push(d.id);
+      });
+    (allDeliveries || [])
+      .forEach((d) => {
+        const key = d.customer_id;
+        if (Number(d.backorder_crates || 0) > 0) {
+          if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, owedDeliveryIds: [], backorder: 0, emptyLeft: 0, emptyLeftDate: null, emptyLeftDeliveryId: null };
+          byCustomer[key].backorder += Number(d.backorder_crates);
+        }
+        if (Number(d.empty_crates_left || 0) > 0) {
+          if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, owedDeliveryIds: [], backorder: 0, emptyLeft: 0, emptyLeftDate: null, emptyLeftDeliveryId: null };
+          // keep only the most recent stop's snapshot for this customer
+          if (!byCustomer[key].emptyLeftDate || d.delivery_date > byCustomer[key].emptyLeftDate) {
+            byCustomer[key].emptyLeft = Number(d.empty_crates_left);
+            byCustomer[key].emptyLeftDate = d.delivery_date;
+            byCustomer[key].emptyLeftDeliveryId = d.id;
+          }
+        }
+      });
+>>>>>>> 58dfcdd4fe13ab634af76f225e813d3dfa43ca24
     return Object.values(byCustomer)
       .map((c) => ({ ...c, name: (customers.find((x) => x.id === c.customerId) || {}).name || "a customer" }))
       .filter((c) => c.owed > 0 || c.backorder > 0 || c.emptyLeft > 0);
@@ -625,6 +692,7 @@ export default function DriverApp({
 
       {crateIssues.length > 0 && (
         <div style={{ background: "#FBEAE6", border: `1.5px solid ${T.red}`, borderRadius: 12, padding: "12px 14px" }}>
+<<<<<<< HEAD
           <div style={{ fontWeight: 800, color: T.red, fontSize: 14, marginBottom: 10 }}>⚠ Crates owed / missing</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {crateIssues.map((c) => (
@@ -655,6 +723,28 @@ export default function DriverApp({
               </div>
             ))}
           </div>
+=======
+          <div style={{ fontWeight: 800, color: T.red, fontSize: 14, marginBottom: 6 }}>⚠ Crates owed / missing</div>
+          {crateIssues.map((c) => (
+            <div key={c.customerId} style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 13, color: T.red, fontWeight: 600, marginBottom: 6 }}>
+                {c.name}
+                {c.owed > 0 && ` · ${c.owed} crate${c.owed !== 1 ? "s" : ""} owed back`}
+                {c.backorder > 0 && ` · ${c.backorder} backordered`}
+                {c.emptyLeft > 0 && ` · ${c.emptyLeft} empty crate${c.emptyLeft !== 1 ? "s" : ""} left`}
+              </div>
+              {c.owed > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: c.emptyLeft > 0 ? 8 : 0 }}>
+                  {openDebts
+                    .filter((debt) => c.owedDeliveryIds.includes(debt.id))
+                    .map((debt) => renderDebtCard(debt, busy, setBusy, "missing"))}
+                </div>
+              )}
+              {c.emptyLeft > 0 &&
+                renderDebtCard({ id: c.emptyLeftDeliveryId, customer_id: c.customerId, empty_crates_left: c.emptyLeft }, busy, setBusy, "empty")}
+            </div>
+          ))}
+>>>>>>> 58dfcdd4fe13ab634af76f225e813d3dfa43ca24
         </div>
       )}
 

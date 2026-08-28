@@ -503,6 +503,41 @@ export default function App() {
     loadAll();
   };
 
+  // Driver-facing collection of empty crates left with a customer — same shape
+  // as collectMissingCrates: requires a photo, supports partial pickup.
+  const collectEmptyCrates = async (deliveryId, driverId, amountCollected, photoUrl) => {
+    const { data: cur, error: e1 } = await supabase
+      .from("deliveries")
+      .select("empty_crates_left, empty_crates_photos")
+      .eq("id", deliveryId)
+      .single();
+    if (e1) {
+      alert("Could not save: " + e1.message);
+      return;
+    }
+    const remaining = Math.max(0, (cur.empty_crates_left || 0) - Number(amountCollected || 0));
+    const resolved = remaining <= 0;
+    const mergedPhotos = [...(cur.empty_crates_photos || []), photoUrl];
+    const { error } = await supabase
+      .from("deliveries")
+      .update({
+        empty_crates_left: remaining,
+        empty_crates_photos: mergedPhotos,
+      })
+      .eq("id", deliveryId);
+    if (error) {
+      alert("Could not save: " + error.message);
+      return;
+    }
+    await logEvent({
+      driver_id: driverId,
+      delivery_id: deliveryId,
+      event_type: "empty_crates_collected",
+      detail: resolved ? "All empty crates picked up" : `Picked up ${amountCollected}, ${remaining} still left`,
+    });
+    loadAll();
+  };
+
   // ---- Layout ----
   return (
     <div
@@ -855,6 +890,8 @@ export default function App() {
                 drivers={drivers}
                 openDebts={openDebts}
                 collectMissingCrates={collectMissingCrates}
+                allDeliveries={allDeliveriesForStock}
+                collectEmptyCrates={collectEmptyCrates}
               />
             ) : adminTab === "reports" ? (
               <AdminReports drivers={drivers} customers={customers} helpers={helpers} />
@@ -886,6 +923,7 @@ export default function App() {
             markDelivered={markDelivered}
             resolveMissingCrates={resolveMissingCrates}
             collectMissingCrates={collectMissingCrates}
+            collectEmptyCrates={collectEmptyCrates}
             updateDriverLocation={updateDriverLocation}
             addStockCount={addStockCount}
             stockCounts={stockCounts}

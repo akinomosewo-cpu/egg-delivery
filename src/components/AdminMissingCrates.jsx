@@ -2,10 +2,11 @@ import { useState } from "react";
 import { supabase, uploadPhoto } from "../supabase";
 import { T, Btn, Tag, NumInput, MediaCapture, fmtDateTime } from "./ui";
 
-export default function AdminMissingCrates({ customers, drivers, openDebts, collectMissingCrates }) {
+export default function AdminMissingCrates({ customers, drivers, openDebts, collectMissingCrates, allDeliveries, collectEmptyCrates }) {
   const [history, setHistory] = useState(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [collectingId, setCollectingId] = useState(null);
+  const [collectingType, setCollectingType] = useState(null); // "missing" | "empty"
   const [amount, setAmount] = useState("");
   const [photo, setPhoto] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -14,6 +15,20 @@ export default function AdminMissingCrates({ customers, drivers, openDebts, coll
   const driverName = (id) => (drivers.find((d) => d.id === id) || {}).name || "…";
 
   const totalOwed = openDebts.reduce((s, d) => s + (d.missing_crates || 0), 0);
+
+  // Only the most recent stop per customer carries a live empty-crates-left
+  // balance — empty_crates_left is a snapshot of that stop, not a running
+  // total, so older rows can hold stale nonzero values that are no longer owed.
+  const emptyDebts = (() => {
+    const latestByCustomer = {};
+    (allDeliveries || []).forEach((d) => {
+      if (Number(d.empty_crates_left || 0) <= 0) return;
+      const cur = latestByCustomer[d.customer_id];
+      if (!cur || d.delivery_date > cur.delivery_date) latestByCustomer[d.customer_id] = d;
+    });
+    return Object.values(latestByCustomer);
+  })();
+  const totalEmptyOwed = emptyDebts.reduce((s, d) => s + (d.empty_crates_left || 0), 0);
 
   const loadHistory = async () => {
     setLoadingHistory(true);
@@ -53,7 +68,7 @@ export default function AdminMissingCrates({ customers, drivers, openDebts, coll
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {openDebts.map((d) => {
-          const isCollecting = collectingId === d.id;
+          const isCollecting = collectingId === d.id && collectingType === "missing";
           return (
             <div key={d.id} style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 14 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -76,6 +91,7 @@ export default function AdminMissingCrates({ customers, drivers, openDebts, coll
                   full
                   onClick={() => {
                     setCollectingId(d.id);
+                    setCollectingType("missing");
                     setAmount("");
                     setPhoto(null);
                   }}
@@ -106,7 +122,7 @@ export default function AdminMissingCrates({ customers, drivers, openDebts, coll
                     />
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
-                    <Btn kind="ghost" small onClick={() => setCollectingId(null)}>
+                    <Btn kind="ghost" small onClick={() => { setCollectingId(null); setCollectingType(null); }}>
                       Cancel
                     </Btn>
                     <Btn
@@ -119,6 +135,7 @@ export default function AdminMissingCrates({ customers, drivers, openDebts, coll
                         await collectMissingCrates(d.id, d.driver_id, Number(amount), photo);
                         setBusy(false);
                         setCollectingId(null);
+                        setCollectingType(null);
                         setAmount("");
                         setPhoto(null);
                       }}
@@ -132,6 +149,110 @@ export default function AdminMissingCrates({ customers, drivers, openDebts, coll
           );
         })}
       </div>
+
+      {emptyDebts.length > 0 && (
+        <>
+          <div
+            style={{
+              background: T.ink,
+              borderRadius: 12,
+              padding: "14px 16px",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "baseline",
+            }}
+          >
+            <div style={{ fontSize: 13, color: "#C9C9C0", fontWeight: 600 }}>Empty crates still owed</div>
+            <div style={{ fontSize: 18, fontWeight: 900, color: T.yolk }}>
+              {totalEmptyOwed} crate{totalEmptyOwed !== 1 ? "s" : ""} · {emptyDebts.length} customer stop{emptyDebts.length !== 1 ? "s" : ""}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {emptyDebts.map((d) => {
+              const isCollecting = collectingId === d.id && collectingType === "empty";
+              return (
+                <div key={d.id} style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 14 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div>
+                      <div style={{ fontWeight: 800, fontSize: 15 }}>{customerName(d.customer_id)}</div>
+                      <div style={{ fontSize: 12, color: T.mute, marginTop: 2 }}>
+                        Delivered by {driverName(d.driver_id)} ·{" "}
+                        {new Date(d.delivery_date + "T00:00:00").toLocaleDateString("en-NG", { day: "numeric", month: "short" })}
+                      </div>
+                    </div>
+                    <Tag color={T.red} bg="#FBEAE6">
+                      {d.empty_crates_left} empty crate{d.empty_crates_left !== 1 ? "s" : ""} left
+                    </Tag>
+                  </div>
+
+                  {!isCollecting ? (
+                    <Btn
+                      small
+                      kind="green"
+                      full
+                      onClick={() => {
+                        setCollectingId(d.id);
+                        setCollectingType("empty");
+                        setAmount("");
+                        setPhoto(null);
+                      }}
+                    >
+                      Mark empty crates picked up
+                    </Btn>
+                  ) : (
+                    <div style={{ background: T.paper, borderRadius: 10, padding: 12, border: `1.5px solid ${T.line}`, marginTop: 10 }}>
+                      <div style={{ marginBottom: 10 }}>
+                        <NumInput
+                          label={`How many crates? (${d.empty_crates_left} left)`}
+                          value={amount}
+                          onChange={setAmount}
+                          width={120}
+                        />
+                      </div>
+                      <div style={{ marginBottom: 12 }}>
+                        <MediaCapture
+                          photos={photo ? [photo] : []}
+                          onAddPhoto={(url) => setPhoto(url)}
+                          onRemovePhoto={() => setPhoto(null)}
+                          video={null}
+                          onSetVideo={() => {}}
+                          onRemoveVideo={() => {}}
+                          upload={uploadPhoto}
+                          maxPhotos={1}
+                          label="Photo of the crates (required)"
+                        />
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <Btn kind="ghost" small onClick={() => { setCollectingId(null); setCollectingType(null); }}>
+                          Cancel
+                        </Btn>
+                        <Btn
+                          small
+                          full
+                          kind="green"
+                          disabled={busy || amount === "" || Number(amount) <= 0 || !photo}
+                          onClick={async () => {
+                            setBusy(true);
+                            await collectEmptyCrates(d.id, d.driver_id, Number(amount), photo);
+                            setBusy(false);
+                            setCollectingId(null);
+                            setCollectingType(null);
+                            setAmount("");
+                            setPhoto(null);
+                          }}
+                        >
+                          {busy ? "Saving…" : "Confirm collected"}
+                        </Btn>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
 
       {/* Resolved history — loaded on demand */}
       <div>
