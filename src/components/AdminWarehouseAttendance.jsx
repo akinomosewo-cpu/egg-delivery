@@ -7,7 +7,12 @@ const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Se
 const DAYS_SHOWN = 30;
 
 const fmtTime = (ts) =>
-  ts ? new Date(ts).toLocaleTimeString("en-NG", { hour: "numeric", minute: "2-digit" }).toLowerCase().replace(" ", "") : "—";
+  ts
+    ? new Date(ts)
+        .toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
+        .toLowerCase()
+        .replace(" ", "")
+    : "—";
 
 const fmtHoursShort = (inMs, outMs) => {
   if (inMs == null || outMs == null) return "—";
@@ -118,6 +123,14 @@ export default function AdminWarehouseAttendance() {
   const [loadingEmployees, setLoadingEmployees] = useState(true);
   const [loadingAttendance, setLoadingAttendance] = useState(false);
   const [error, setError] = useState(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  // Ticks the "on shift now" banner forward while a worker is clocked in,
+  // so the duration keeps counting up instead of freezing at the clock-in time.
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     fetchEmployees()
@@ -148,7 +161,7 @@ export default function AdminWarehouseAttendance() {
     todayRow && todayRow.inAt != null
       ? todayRow.outAt != null
         ? { label: "Today", detail: fmtDuration(todayRow.outAt - todayRow.inAt), live: false }
-        : { label: "On shift now", detail: `Clocked in at ${fmtTime(todayRow.inAt)}`, live: true }
+        : { label: "On shift now", detail: fmtDuration(now - todayRow.inAt), live: true }
       : { label: "Today", detail: "Not clocked in yet", live: false, idle: true };
 
   const stats = useMemo(() => {
