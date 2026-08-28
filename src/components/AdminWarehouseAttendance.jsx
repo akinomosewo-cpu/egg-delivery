@@ -299,8 +299,6 @@ export default function AdminWarehouseAttendance() {
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <StatCard label="Present" value={stats.presentDays} accent={T.green} />
             <StatCard label="Absent" value={stats.absentDays} accent={T.red} />
-            <StatCard label="Avg / shift" value={stats.avgHours} />
-            <StatCard label="Attendance" value={`${stats.rate}%`} accent={stats.rate >= 80 ? T.green : stats.rate >= 50 ? T.yolkDark : T.red} />
           </div>
 
           <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 14, overflow: "hidden" }}>
