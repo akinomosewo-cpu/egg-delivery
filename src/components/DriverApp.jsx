@@ -27,6 +27,7 @@ export default function DriverApp({
   helpers,
   deliveries,
   openDebts,
+  allDeliveries,
   claimDelivery,
   unclaimDelivery,
   updateStatus,
@@ -39,7 +40,6 @@ export default function DriverApp({
   addStockCount,
   stockCounts,
   availableStock,
-  allDeliveries,
 }) {
   const [driverId, setDriverId] = useState(null);
   const [claimingId, setClaimingId] = useState(null);
@@ -63,25 +63,14 @@ export default function DriverApp({
   const [collectingDebtType, setCollectingDebtType] = useState(null); // "missing" | "empty"
   const [collectAmount, setCollectAmount] = useState("");
   const [collectPhoto, setCollectPhoto] = useState(null);
-  const [stockForm, setStockForm] = useState({
-    morning: { small: "", medium: "", large: "", photo: null, video: null },
-    evening: { small: "", medium: "", large: "", photo: null, video: null },
-  });
-  const [stockBusy, setStockBusy] = useState(false);
 
   // Shared card for a single open crate debt — used both in the top
-<<<<<<< HEAD
-  // summary banner and the detailed list further down, so both spots
-  // render the exact same evidence-capture flow consistently.
-  const renderDebtCard = (debt) => {
-=======
   // banner and the detailed list further down, so the same photo+amount
   // evidence flow is available everywhere, regardless of which driver
   // originally created the debt. `kind` distinguishes a missing-crates debt
   // from an empty-crates-left debt, since both key off a delivery id and
   // could otherwise collide in the collectingDebtId/collectingDebtType state.
   const renderDebtCard = (debt, busyState, setBusyState, kind = "missing") => {
->>>>>>> 58dfcdd4fe13ab634af76f225e813d3dfa43ca24
     const c = customers.find((x) => x.id === debt.customer_id);
     const isCollecting = collectingDebtId === debt.id && collectingDebtType === kind;
     const owed = kind === "missing" ? debt.missing_crates : debt.empty_crates_left;
@@ -89,16 +78,10 @@ export default function DriverApp({
     const label = kind === "missing" ? "Collected the crates" : "Picked up the empty crates";
     const owedText = kind === "missing" ? `Owes ${owed} crate${owed !== 1 ? "s" : ""}` : `${owed} empty crate${owed !== 1 ? "s" : ""} left there`;
     return (
-<<<<<<< HEAD
-      <div key={debt.id} style={{ background: "#FBEAE6", border: `1.5px solid ${T.red}`, borderRadius: 10, padding: 12 }}>
-        <div style={{ fontSize: 12, color: T.mute, marginBottom: 8 }}>
-          {c ? c.name : "…"} owes {debt.missing_crates} crate{debt.missing_crates !== 1 ? "s" : ""}
-=======
       <div key={debt.id} style={{ background: "#FBEAE6", border: `1.5px solid ${T.red}`, borderRadius: 12, padding: 14 }}>
         <div style={{ fontWeight: 800, fontSize: 14 }}>{c ? c.name : "…"}</div>
         <div style={{ fontSize: 12, color: T.mute, marginBottom: 10 }}>
           {owedText}
->>>>>>> 58dfcdd4fe13ab634af76f225e813d3dfa43ca24
           {c && c.area ? ` · ${c.area}` : ""}
         </div>
 
@@ -147,24 +130,18 @@ export default function DriverApp({
                 small
                 kind="green"
                 full
-                disabled={busy || collectAmount === "" || Number(collectAmount) <= 0 || !collectPhoto}
+                disabled={busyState || collectAmount === "" || Number(collectAmount) <= 0 || !collectPhoto}
                 onClick={async () => {
-<<<<<<< HEAD
-                  setBusy(true);
-                  await collectMissingCrates(debt.id, driverId, Number(collectAmount), collectPhoto);
-                  setBusy(false);
-=======
                   setBusyState(true);
                   await collectFn(debt.id, driverId, Number(collectAmount), collectPhoto);
                   setBusyState(false);
->>>>>>> 58dfcdd4fe13ab634af76f225e813d3dfa43ca24
                   setCollectingDebtId(null);
                   setCollectingDebtType(null);
                   setCollectAmount("");
                   setCollectPhoto(null);
                 }}
               >
-                {busy ? "Saving…" : "Confirm collected"}
+                {busyState ? "Saving…" : "Confirm collected"}
               </Btn>
             </div>
           </div>
@@ -172,6 +149,11 @@ export default function DriverApp({
       </div>
     );
   };
+  const [stockForm, setStockForm] = useState({
+    morning: { small: "", medium: "", large: "", photo: null, video: null },
+    evening: { small: "", medium: "", large: "", photo: null, video: null },
+  });
+  const [stockBusy, setStockBusy] = useState(false);
 
   // Keep a stable reference to updateDriverLocation — App.jsx redefines this
   // function on every render (including its own 5-second polling refresh),
@@ -258,21 +240,12 @@ export default function DriverApp({
   const claiming = available.find((d) => d.id === claimingId);
 
   const toggleHelper = (id) => {
-    if (busyHelperIds.has(id)) return; // can't pick someone already out on another stop
     setPickedHelpers((cur) => {
       if (cur.includes(id)) return cur.filter((x) => x !== id);
       if (cur.length >= 2) return cur; // capped at 2
       return [...cur, id];
     });
   };
-
-  // A helper is "busy" if they're on any not-yet-delivered stop, for any
-  // driver — shared across the whole team, not just this driver's own route.
-  const busyHelperIds = new Set(
-    deliveries
-      .filter((d) => d.status !== "delivered")
-      .flatMap((d) => d.helper_ids || [])
-  );
 
   // ---- Claiming a delivery: pick 0-2 helpers, then confirm ----
   if (claiming) {
@@ -305,26 +278,23 @@ export default function DriverApp({
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 18 }}>
               {pickableHelpers.map((h) => {
                 const picked = pickedHelpers.includes(h.id);
-                const busy = busyHelperIds.has(h.id);
                 return (
                   <button
                     key={h.id}
                     onClick={() => toggleHelper(h.id)}
-                    disabled={busy}
                     style={{
                       padding: "9px 14px",
                       borderRadius: 999,
-                      border: `1.5px solid ${busy ? T.line : picked ? T.ink : T.line}`,
-                      background: busy ? "#EDEDE6" : picked ? T.greenBg : "#fff",
-                      color: busy ? T.mute : T.ink,
+                      border: `1.5px solid ${picked ? T.ink : T.line}`,
+                      background: picked ? T.greenBg : "#fff",
+                      color: T.ink,
                       fontWeight: 700,
                       fontSize: 13,
-                      cursor: busy ? "not-allowed" : "pointer",
+                      cursor: "pointer",
                       fontFamily: "inherit",
-                      opacity: busy ? 0.6 : 1,
                     }}
                   >
-                    {picked ? "✓ " : ""}{h.name}{busy ? " (out on a delivery)" : ""}
+                    {picked ? "✓ " : ""}{h.name}
                   </button>
                 );
               })}
@@ -589,7 +559,7 @@ export default function DriverApp({
                         { driver_id: driverId, customer_id: stop.customer_id }
                       );
                     } else {
-                      await submitPartialDelivery(stop.id, thisVisit, stopPhotos, crateExchange, {
+                      await submitPartialDelivery(stop.id, thisVisit, stopPhotos, stopVideo, crateExchange, {
                         driver_id: driverId,
                         customer_id: stop.customer_id,
                       });
@@ -629,28 +599,6 @@ export default function DriverApp({
   // ---- Main screen: available pool + my claimed route ----
   const crateIssues = (() => {
     const byCustomer = {};
-<<<<<<< HEAD
-    openDebts.forEach((d) => {
-      const key = d.customer_id;
-      if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, owedDeliveryIds: [], backorder: 0, emptyLeft: 0, emptyLeftDate: null };
-      byCustomer[key].owed += Number(d.missing_crates || 0);
-      byCustomer[key].owedDeliveryIds.push(d.id);
-    });
-    (allDeliveries || []).forEach((d) => {
-      const key = d.customer_id;
-      if (Number(d.backorder_crates || 0) > 0) {
-        if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, owedDeliveryIds: [], backorder: 0, emptyLeft: 0, emptyLeftDate: null };
-        byCustomer[key].backorder += Number(d.backorder_crates);
-      }
-      if (Number(d.empty_crates_left || 0) > 0) {
-        if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, owedDeliveryIds: [], backorder: 0, emptyLeft: 0, emptyLeftDate: null };
-        if (!byCustomer[key].emptyLeftDate || d.delivery_date > byCustomer[key].emptyLeftDate) {
-          byCustomer[key].emptyLeft = Number(d.empty_crates_left);
-          byCustomer[key].emptyLeftDate = d.delivery_date;
-        }
-      }
-    });
-=======
     openDebts
       .forEach((d) => {
         const key = d.customer_id;
@@ -675,7 +623,6 @@ export default function DriverApp({
           }
         }
       });
->>>>>>> 58dfcdd4fe13ab634af76f225e813d3dfa43ca24
     return Object.values(byCustomer)
       .map((c) => ({ ...c, name: (customers.find((x) => x.id === c.customerId) || {}).name || "a customer" }))
       .filter((c) => c.owed > 0 || c.backorder > 0 || c.emptyLeft > 0);
@@ -692,38 +639,6 @@ export default function DriverApp({
 
       {crateIssues.length > 0 && (
         <div style={{ background: "#FBEAE6", border: `1.5px solid ${T.red}`, borderRadius: 12, padding: "12px 14px" }}>
-<<<<<<< HEAD
-          <div style={{ fontWeight: 800, color: T.red, fontSize: 14, marginBottom: 10 }}>⚠ Crates owed / missing</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {crateIssues.map((c) => (
-              <div key={c.customerId} style={{ background: "#fff", border: `1.5px solid ${T.line}`, borderRadius: 10, padding: 12 }}>
-                <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>{c.name}</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: c.owed > 0 ? 10 : 0 }}>
-                  {c.owed > 0 && (
-                    <div style={{ fontSize: 13, color: T.red, fontWeight: 700 }}>
-                      {c.owed} crate{c.owed !== 1 ? "s" : ""} owed back
-                    </div>
-                  )}
-                  {c.backorder > 0 && (
-                    <div style={{ fontSize: 13, color: T.red, fontWeight: 700 }}>
-                      {c.backorder} crate{c.backorder !== 1 ? "s" : ""} backordered
-                    </div>
-                  )}
-                  {c.emptyLeft > 0 && (
-                    <div style={{ fontSize: 13, color: T.red, fontWeight: 700 }}>
-                      {c.emptyLeft} empty crate{c.emptyLeft !== 1 ? "s" : ""} left
-                    </div>
-                  )}
-                </div>
-                {c.owed > 0 && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {openDebts.filter((debt) => c.owedDeliveryIds.includes(debt.id)).map((debt) => renderDebtCard(debt))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-=======
           <div style={{ fontWeight: 800, color: T.red, fontSize: 14, marginBottom: 6 }}>⚠ Crates owed / missing</div>
           {crateIssues.map((c) => (
             <div key={c.customerId} style={{ marginTop: 8 }}>
@@ -744,7 +659,6 @@ export default function DriverApp({
                 renderDebtCard({ id: c.emptyLeftDeliveryId, customer_id: c.customerId, empty_crates_left: c.emptyLeft }, busy, setBusy, "empty")}
             </div>
           ))}
->>>>>>> 58dfcdd4fe13ab634af76f225e813d3dfa43ca24
         </div>
       )}
 
@@ -918,14 +832,15 @@ export default function DriverApp({
 
       {/* Missing crates owed by customers — company-wide, any driver can collect */}
       {(() => {
-        if (openDebts.length === 0) return null;
+        const allDebts = openDebts;
+        if (allDebts.length === 0) return null;
         return (
           <div>
             <div style={{ fontSize: 13, fontWeight: 800, color: T.mute, marginBottom: 8 }}>
-              Crates still owed by customers ({openDebts.length})
+              Crates still owed by customers ({allDebts.length})
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {openDebts.map((debt) => renderDebtCard(debt))}
+              {allDebts.map((debt) => renderDebtCard(debt, busy, setBusy))}
             </div>
           </div>
         );
