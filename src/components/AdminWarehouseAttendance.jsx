@@ -2,17 +2,27 @@ import { useEffect, useMemo, useState } from "react";
 import { T } from "./ui";
 import { fetchEmployees, fetchAttendanceForEmployee } from "../warehouseSupabase";
 
-const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const DAYS_SHOWN = 30;
+
+// Warehouse is in Abuja (WAT, UTC+1, no DST) — attendance always renders in
+// that timezone, regardless of what timezone the admin's own device is set to.
+const TZ = "Africa/Lagos";
 
 const fmtTime = (ts) =>
   ts
     ? new Date(ts)
-        .toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
+        .toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: TZ })
         .toLowerCase()
         .replace(" ", "")
     : "—";
+
+const abujaDateKey = (ts) => new Date(ts).toLocaleDateString("en-CA", { timeZone: TZ });
+
+const abujaDatePartsFmt = new Intl.DateTimeFormat("en-US", { timeZone: TZ, month: "short", day: "numeric", weekday: "short" });
+function abujaDateParts(ts) {
+  const parts = Object.fromEntries(abujaDatePartsFmt.formatToParts(new Date(ts)).map((p) => [p.type, p.value]));
+  return { day: Number(parts.day), month: parts.month, weekday: parts.weekday };
+}
 
 const fmtHoursShort = (inMs, outMs) => {
   if (inMs == null || outMs == null) return "—";
@@ -46,28 +56,29 @@ const initials = (name) =>
 function buildDayRows(events) {
   const byDay = {};
   for (const e of events) {
-    const d = new Date(e.occurred_at);
-    const key = d.toLocaleDateString("en-CA");
+    const at = new Date(e.occurred_at).getTime();
+    const key = abujaDateKey(at);
     if (!byDay[key]) byDay[key] = [];
-    byDay[key].push({ type: e.event_type, at: d.getTime() });
+    byDay[key].push({ type: e.event_type, at });
   }
 
   const rows = [];
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const nowMs = Date.now();
 
+  // Lagos/Abuja has a fixed UTC+1 offset year-round (no DST), so walking
+  // back in exact 24h steps from "now" never skips or repeats a calendar day.
   for (let i = 0; i < DAYS_SHOWN; i++) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    const key = d.toLocaleDateString("en-CA");
+    const dayMs = nowMs - i * 86400000;
+    const key = abujaDateKey(dayMs);
+    const { day, month, weekday } = abujaDateParts(dayMs);
     const dayEvents = (byDay[key] || []).sort((a, b) => a.at - b.at);
     const inEvt = dayEvents.find((e) => e.type === "in");
     const outEvt = [...dayEvents].reverse().find((e) => e.type === "out");
     rows.push({
       key,
-      date: d.getDate(),
-      month: MONTH_NAMES[d.getMonth()],
-      dayName: DAY_NAMES[d.getDay()],
+      date: day,
+      month,
+      dayName: weekday,
       present: !!inEvt,
       inAt: inEvt ? inEvt.at : null,
       outAt: outEvt ? outEvt.at : null,
