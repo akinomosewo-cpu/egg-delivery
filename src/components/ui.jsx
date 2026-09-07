@@ -276,8 +276,21 @@ export const MediaCapture = ({
 
       {/* Live camera button — opens rear camera directly, no file picker */}
       <div style={{ marginTop: 8 }}>
+<<<<<<< HEAD
         <button
           onClick={() => !busyPhoto && handleTakePhoto()}
+=======
+        <input
+          type="file"
+          accept="image/*"
+          capture="environment"
+          style={{ display: "none" }}
+          ref={videoInputRef}
+          onChange={handlePhotoSelected}
+        />
+        <button
+          onClick={() => !busyPhoto && videoInputRef.current && videoInputRef.current.click()}
+>>>>>>> 1ed71c833e4f529e3f6b44a5cd412f4e2e2f36d6
           style={{
             padding: "9px 14px", borderRadius: 8, border: `2px dashed ${T.line}`,
             background: "#fff", color: T.mute, fontSize: 13, fontWeight: 700,

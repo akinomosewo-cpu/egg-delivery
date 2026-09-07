@@ -13,6 +13,7 @@ import AdminStock from "./components/AdminStock";
 import ActivityLogTable from "./components/ActivityLogTable";
 import AdminBalances from "./components/AdminBalances";
 import AdminCalendar from "./components/AdminCalendar";
+import AdminWarehouseAttendance from "./components/AdminWarehouseAttendance";
 import DriverApp from "./components/DriverApp";
 
 const ADMIN_PIN = "8791"; // change this to change the admin password
@@ -754,6 +755,7 @@ export default function App() {
                   { key: "missing", label: "Missing" },
                   { key: "reports", label: "Reports" },
                   { key: "manage", label: "Manage" },
+                  { key: "attendance", label: "Warehouse Attendance" },
                 ];
                 const activeInMore = moreTabs.find((t) => t.key === adminTab);
                 return (
@@ -895,6 +897,8 @@ export default function App() {
               />
             ) : adminTab === "reports" ? (
               <AdminReports drivers={drivers} customers={customers} helpers={helpers} />
+            ) : adminTab === "attendance" ? (
+              <AdminWarehouseAttendance />
             ) : (
               <AdminManage
                 drivers={drivers}

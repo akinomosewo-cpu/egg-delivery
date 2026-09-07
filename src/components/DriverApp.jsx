@@ -444,9 +444,9 @@ export default function DriverApp({
                     photos={stopPhotos}
                     onAddPhoto={(url) => setStopPhotos((p) => [...p, url])}
                     onRemovePhoto={(i) => setStopPhotos((p) => p.filter((_, idx) => idx !== i))}
-                    video={stopVideo}
-                    onSetVideo={setStopVideo}
-                    onRemoveVideo={() => setStopVideo(null)}
+                    video={null}
+                    onSetVideo={() => {}}
+                    onRemoveVideo={() => {}}
                     upload={uploadPhoto}
                     maxPhotos={5}
                     label="Photos at this stop (at least 1 required)"
@@ -462,13 +462,12 @@ export default function DriverApp({
                 {isFinalVisit && (
                   <>
                     <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
-                      <NumInput label="Missing crates" value={missingCrates} onChange={setMissingCrates} width={120} />
-                      <NumInput label="Cracked eggs" value={missingEggs} onChange={setMissingEggs} width={140} />
+                      <NumInput label="Returned Cracked" value={missingCrates} onChange={setMissingCrates} width={120} />
                       <NumInput label="Owed to customer (short of eggs)" value={backorderCrates} onChange={setBackorderCrates} width={180} />
                     </div>
 
                     <div style={{ marginBottom: 16 }}>
-                      <NumInput label="Payment collected (₦)" value={payment} onChange={setPayment} width={160} decimal />
+                      {/* payment removed from driver form */}
                     </div>
 
                     {receiptRequired && (
