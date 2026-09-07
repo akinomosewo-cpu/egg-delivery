@@ -178,7 +178,6 @@ export const MediaCapture = ({
   label = "Photos",
 }) => {
   const [busyPhoto, setBusyPhoto] = useState(false);
-  const [busyVideo, setBusyVideo] = useState(false);
   const [err, setErr] = useState(null);
 
   const photoInputRef = useRef(null);
@@ -256,23 +255,27 @@ export const MediaCapture = ({
         )}
       </div>
 
-      <div style={{ fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 6 }}>Video (optional)</div>
-      {video ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <video src={video} style={{ width: 90, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }} muted />
-          <Btn kind="danger" small onClick={onRemoveVideo}>Remove video</Btn>
-        </div>
-      ) : (
+      {/* Live camera button — opens rear camera directly, no file picker */}
+      <div style={{ marginTop: 8 }}>
+        <input
+          type="file"
+          accept="image/*"
+          capture="environment"
+          style={{ display: "none" }}
+          ref={videoInputRef}
+          onChange={handlePhotoSelected}
+        />
         <button
-          onClick={() => !busyVideo && videoInputRef.current && videoInputRef.current.click()}
+          onClick={() => !busyPhoto && videoInputRef.current && videoInputRef.current.click()}
           style={{
-            padding: "9px 14px", borderRadius: 8, border: `2px dashed ${T.line}`, background: "#fff",
-            color: T.mute, fontSize: 13, fontWeight: 700, cursor: busyVideo ? "wait" : "pointer", fontFamily: "inherit",
+            padding: "9px 14px", borderRadius: 8, border: `2px dashed ${T.line}`,
+            background: "#fff", color: T.mute, fontSize: 13, fontWeight: 700,
+            cursor: busyPhoto ? "wait" : "pointer", fontFamily: "inherit",
           }}
         >
-          {busyVideo ? "Uploading… (large videos can take a while)" : "＋ Add a short video"}
+          {busyPhoto ? "Uploading…" : "📷 Take a photo now"}
         </button>
-      )}
+      </div>
 
       {err && <div style={{ fontSize: 12, color: T.red, fontWeight: 700, marginTop: 6 }}>{err}</div>}
     </div>
