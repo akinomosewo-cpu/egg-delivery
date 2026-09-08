@@ -1,15 +1,4 @@
 import { useRef, useState, useEffect, forwardRef, useImperativeHandle } from "react";
-import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
-
-// Converts a base64 data string (no data: prefix) into a File, so it can
-// go through the exact same `upload(file)` path as a picked/gallery file.
-const base64ToFile = (base64Data, filename, mimeType) => {
-  const byteChars = atob(base64Data);
-  const byteNumbers = new Array(byteChars.length);
-  for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
-  const byteArray = new Uint8Array(byteNumbers);
-  return new File([byteArray], filename, { type: mimeType });
-};
 
 export const T = {
   ink: "#111111",
@@ -93,9 +82,6 @@ export const NumInput = ({ label, value, onChange, width = 90, decimal = false, 
       onChange={(e) => {
         const raw = e.target.value;
         if (raw === "") return onChange("");
-        // Filter to only what's valid — keeps the raw string while typing
-        // (e.g. a trailing "5." mid-type) instead of parsing on every keystroke,
-        // which is what was silently eating the decimal point on iPhone/Android.
         const re = decimal ? /^\d*\.?\d*$/ : /^\d*$/;
         if (re.test(raw)) onChange(raw);
       }}
@@ -168,16 +154,16 @@ export const TextInput = ({ label, value, onChange, placeholder }) => (
   </label>
 );
 
-// Media capture: up to N photos, no video (video support removed).
-// Two ways in: "＋" tile opens the normal file/gallery picker; the
-// "Take a photo now" button uses capture="environment" so it opens the
-// rear camera directly. Any video/onSetVideo/onRemoveVideo props passed
-// in by older callers are accepted and ignored — this component no
-// longer does anything with video.
+// MediaCapture — opens the rear camera directly (no file picker).
+// Uses a dedicated ref (cameraInputRef) for the capture input, separate
+// from any other hidden inputs, so Android routes straight to the camera app.
 export const MediaCapture = ({
   photos,
   onAddPhoto,
   onRemovePhoto,
+  video,
+  onSetVideo,
+  onRemoveVideo,
   upload,
   maxPhotos = 5,
   label = "Photos",
@@ -185,11 +171,13 @@ export const MediaCapture = ({
   const [busyPhoto, setBusyPhoto] = useState(false);
   const [err, setErr] = useState(null);
 
-  const photoInputRef = useRef(null);
+  // Dedicated ref for the camera-capture input — must NOT be shared with
+  // any other input or the click will trigger the wrong one.
+  const cameraInputRef = useRef(null);
 
   const handlePhotoSelected = async (e) => {
     const file = e.target.files && e.target.files[0];
-    e.target.value = ""; // reset so picking the same file again still fires onChange
+    e.target.value = "";
     if (!file) return;
     setBusyPhoto(true);
     setErr(null);
@@ -204,46 +192,23 @@ export const MediaCapture = ({
     }
   };
 
-  // Native camera capture — goes straight to Android's camera app via
-  // Capacitor's Camera plugin. This is deliberately NOT a
-  // <input type="file" capture="environment"> file picker: Capacitor's
-  // Android WebView doesn't reliably honor the `capture` hint, so that
-  // approach can silently fall back to the generic Camera/Files chooser
-  // instead of opening the camera directly. The native plugin call
-  // bypasses that entirely.
-  const handleTakePhoto = async () => {
-    setBusyPhoto(true);
-    setErr(null);
-    try {
-      const photo = await Camera.getPhoto({
-        quality: 80,
-        resultType: CameraResultType.Base64,
-        source: CameraSource.Camera,
-        saveToGallery: false,
-      });
-      const mimeType = `image/${photo.format || "jpeg"}`;
-      const file = base64ToFile(photo.base64String, `photo-${Date.now()}.${photo.format || "jpg"}`, mimeType);
-      const url = await upload(file);
-      onAddPhoto(url);
-    } catch (ex) {
-      // User cancelling the camera also lands here — don't show an error for that.
-      const cancelled = /cancel/i.test(ex && ex.message || "");
-      if (!cancelled) {
-        setErr(ex.message || "Camera capture failed — check camera permission and retry");
-        console.error(ex);
-      }
-    } finally {
-      setBusyPhoto(false);
-    }
-  };
-
   return (
     <div>
-      <input ref={photoInputRef} type="file" accept="image/*" onChange={handlePhotoSelected} style={{ display: "none" }} />
+      {/* Hidden camera input — capture="environment" forces the rear camera on Android */}
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        style={{ display: "none" }}
+        onChange={handlePhotoSelected}
+      />
 
       <div style={{ fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 6 }}>
         {label} ({photos.length}/{maxPhotos})
       </div>
+
+      {/* Thumbnail strip */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
         {photos.map((p, i) => (
           <div key={i} style={{ position: "relative" }}>
@@ -260,28 +225,38 @@ export const MediaCapture = ({
             </button>
           </div>
         ))}
+
+        {/* Camera icon placeholder — greyed out while uploading */}
         {photos.length < maxPhotos && (
-          <button
-            onClick={() => !busyPhoto && photoInputRef.current && photoInputRef.current.click()}
+          <div
             style={{
-              width: 54, height: 54, borderRadius: 8, border: `2px dashed ${T.ink}`,
-              background: "#F5FBE6", color: T.ink, fontSize: busyPhoto ? 12 : 22, fontWeight: 700,
-              cursor: busyPhoto ? "wait" : "pointer", fontFamily: "inherit",
+              width: 54, height: 54, borderRadius: 8, border: `2px dashed ${T.line}`,
+              background: "#F0F0EB", color: T.mute, fontSize: 22, fontWeight: 700,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              opacity: busyPhoto ? 0.15 : 0.5,
+              cursor: "default",
+              pointerEvents: "none",
+              transition: "opacity 0.2s",
             }}
+            title="Use the 'Take a photo now' button below"
           >
-            {busyPhoto ? "…" : "📷"}
-          </button>
+            📷
+          </div>
         )}
       </div>
 
-      {/* Live camera button — opens rear camera directly, no file picker */}
+      {/* Take a photo now — opens rear camera directly, disabled while uploading */}
       <div style={{ marginTop: 8 }}>
         <button
-          onClick={() => !busyPhoto && handleTakePhoto()}
+          disabled={busyPhoto || photos.length >= maxPhotos}
+          onClick={() => cameraInputRef.current && cameraInputRef.current.click()}
           style={{
             padding: "9px 14px", borderRadius: 8, border: `2px dashed ${T.line}`,
             background: "#fff", color: T.mute, fontSize: 13, fontWeight: 700,
-            cursor: busyPhoto ? "wait" : "pointer", fontFamily: "inherit",
+            fontFamily: "inherit",
+            opacity: (busyPhoto || photos.length >= maxPhotos) ? 0.45 : 1,
+            cursor: (busyPhoto || photos.length >= maxPhotos) ? "not-allowed" : "pointer",
+            pointerEvents: (busyPhoto || photos.length >= maxPhotos) ? "none" : "auto",
           }}
         >
           {busyPhoto ? "Uploading…" : "📷 Take a photo now"}
