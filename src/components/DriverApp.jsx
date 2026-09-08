@@ -59,6 +59,11 @@ export default function DriverApp({
   const [payment, setPayment] = useState("");
   const [receiptPhoto, setReceiptPhoto] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
   const [collectingDebtId, setCollectingDebtId] = useState(null);
   const [collectingDebtType, setCollectingDebtType] = useState(null); // "missing" | "empty"
   const [collectAmount, setCollectAmount] = useState("");
@@ -385,19 +390,25 @@ export default function DriverApp({
             </Btn>
           )}
 
-          {stop.status === "in_transit" && (
-            <Btn
-              full
-              disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                await updateStatus(stop.id, "arrived", { driver_id: driverId, customer_id: stop.customer_id });
-                setBusy(false);
-              }}
-            >
-              {busy ? "Updating…" : "Arrived at customer's location"}
-            </Btn>
-          )}
+          {stop.status === "in_transit" && (() => {
+            const startedAt = stop.started_at ? new Date(stop.started_at) : null;
+            const minsElapsed = startedAt ? (Date.now() - startedAt.getTime()) / 60000 : 999;
+            const locked = minsElapsed < 4;
+            const secsLeft = locked ? Math.ceil((4 - minsElapsed) * 60) : 0;
+            return (
+              <Btn
+                full
+                disabled={busy || locked}
+                onClick={async () => {
+                  setBusy(true);
+                  await updateStatus(stop.id, "arrived", { driver_id: driverId, customer_id: stop.customer_id });
+                  setBusy(false);
+                }}
+              >
+                {busy ? "Updating…" : locked ? `Arrived at customer's location (wait ${secsLeft}s)` : "Arrived at customer's location"}
+              </Btn>
+            );
+          })()}
 
           {stop.status === "arrived" && (() => {
             const alreadyDelivered = stop.crates_delivered || 0;
@@ -463,7 +474,7 @@ export default function DriverApp({
                   <>
                     <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
                       <NumInput label="Returned Cracked" value={missingCrates} onChange={setMissingCrates} width={120} />
-                      <NumInput label="Owed to customer (short of eggs)" value={backorderCrates} onChange={setBackorderCrates} width={180} />
+                      <NumInput label="Crates owed to customer (short of eggs)" value={backorderCrates} onChange={setBackorderCrates} width={220} />
                     </div>
 
                     <div style={{ marginBottom: 16 }}>
