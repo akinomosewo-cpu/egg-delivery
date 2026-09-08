@@ -390,7 +390,7 @@ export default function DriverApp({
             </Btn>
           )}
 
-          {stop.status === "in_transit" && (() => {
+          {stop.status === "in_transit" && tick >= 0 && (() => {
             const startedAt = stop.started_at ? new Date(stop.started_at) : null;
             const minsElapsed = startedAt ? (Date.now() - startedAt.getTime()) / 60000 : 999;
             const locked = minsElapsed < 4;
@@ -903,7 +903,7 @@ export default function DriverApp({
 
         const s = stockForm[type];
         const setField = (field, value) => setStockForm((prev) => ({ ...prev, [type]: { ...prev[type], [field]: value } }));
-        const filled = s.small !== "" && s.medium !== "" && s.large !== "" && s.photo && s.video;
+        const filled = s.small !== "" && s.medium !== "" && s.large !== "" && s.photo;
 
         return (
           <div key={type} style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 14 }}>

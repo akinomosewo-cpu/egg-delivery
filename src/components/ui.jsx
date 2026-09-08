@@ -100,11 +100,7 @@ export const NumInput = ({ label, value, onChange, width = 90, decimal = false, 
     />
     {fractions && (
       <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
-        {[
-          ["½", 0.5],
-          ["¼", 0.25],
-          ["¾", 0.75],
-        ].map(([label2, frac]) => (
+        {[["½", 0.5], ["¼", 0.25], ["¾", 0.75]].map(([label2, frac]) => (
           <button
             key={label2}
             type="button"
@@ -113,16 +109,9 @@ export const NumInput = ({ label, value, onChange, width = 90, decimal = false, 
               onChange(String(whole + frac));
             }}
             style={{
-              flex: 1,
-              padding: "5px 0",
-              fontSize: 13,
-              fontWeight: 700,
-              color: T.ink,
-              background: T.tan,
-              border: `1px solid ${T.line}`,
-              borderRadius: 6,
-              cursor: "pointer",
-              fontFamily: "inherit",
+              flex: 1, padding: "5px 0", fontSize: 13, fontWeight: 700,
+              color: T.ink, background: T.tan, border: `1px solid ${T.line}`,
+              borderRadius: 6, cursor: "pointer", fontFamily: "inherit",
             }}
           >
             {label2}
@@ -141,42 +130,37 @@ export const TextInput = ({ label, value, onChange, placeholder }) => (
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       style={{
-        width: "100%",
-        boxSizing: "border-box",
-        padding: "10px 12px",
-        fontSize: 15,
-        color: "#2A2118",
-        border: `1.5px solid ${T.line}`,
-        borderRadius: 8,
-        background: "#fff",
-        fontFamily: "inherit",
+        width: "100%", boxSizing: "border-box", padding: "10px 12px",
+        fontSize: 15, color: "#2A2118", border: `1.5px solid ${T.line}`,
+        borderRadius: 8, background: "#fff", fontFamily: "inherit",
       }}
     />
   </label>
 );
 
-// Uses the Capacitor Camera plugin to open the native camera directly —
-// bypasses the WebView file picker which ignores capture="environment".
-// Falls back to a plain file input on web (browser preview / dev mode).
-const takePhoto = async () => {
+// Opens the native Android camera via the Capacitor Camera plugin.
+// capture="environment" on a file input is ignored inside Capacitor's WebView,
+// so this is the only reliable way to go straight to the camera.
+const takePhotoWithCapacitor = async () => {
   try {
     const photo = await Camera.getPhoto({
       resultType: CameraResultType.DataUrl,
-      source: CameraSource.Camera,   // opens camera directly, no gallery picker
+      source: CameraSource.Camera,
       quality: 80,
       correctOrientation: true,
     });
-    // Convert dataUrl to a File so the existing upload() function works unchanged
     const res = await fetch(photo.dataUrl);
     const blob = await res.blob();
     return new File([blob], `photo_${Date.now()}.jpg`, { type: "image/jpeg" });
   } catch (e) {
-    // User cancelled or camera unavailable — return null silently
-    if (e && e.message && e.message.toLowerCase().includes("cancel")) return null;
+    // User cancelled — return null silently
+    if (!e || !e.message || e.message.toLowerCase().includes("cancel") || e.message.toLowerCase().includes("no image")) return null;
     throw e;
   }
 };
 
+// MediaCapture — shared across the whole app (stop photos, receipt,
+// debt collection, warehouse counts). Camera icon greys out while uploading.
 export const MediaCapture = ({
   photos,
   onAddPhoto,
@@ -190,14 +174,15 @@ export const MediaCapture = ({
 }) => {
   const [busyPhoto, setBusyPhoto] = useState(false);
   const [err, setErr] = useState(null);
+  const atMax = photos.length >= maxPhotos;
 
   const handleTakePhoto = async () => {
-    if (busyPhoto || photos.length >= maxPhotos) return;
+    if (busyPhoto || atMax) return;
     setBusyPhoto(true);
     setErr(null);
     try {
-      const file = await takePhoto();
-      if (!file) return; // user cancelled
+      const file = await takePhotoWithCapacitor();
+      if (!file) return; // cancelled
       const url = await upload(file);
       onAddPhoto(url);
     } catch (ex) {
@@ -214,26 +199,28 @@ export const MediaCapture = ({
         {label} ({photos.length}/{maxPhotos})
       </div>
 
-      {/* Thumbnail strip */}
+      {/* Thumbnail strip + camera icon placeholder */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
         {photos.map((p, i) => (
           <div key={i} style={{ position: "relative" }}>
-            <img src={p} alt={`photo ${i + 1}`} style={{ width: 54, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }} />
+            <img
+              src={p}
+              alt={`photo ${i + 1}`}
+              style={{ width: 54, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }}
+            />
             <button
               onClick={() => onRemovePhoto(i)}
               style={{
-                position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: 99,
-                border: "none", background: T.red, color: "#fff", fontSize: 12, fontWeight: 800,
-                cursor: "pointer", lineHeight: "20px", padding: 0,
+                position: "absolute", top: -6, right: -6, width: 20, height: 20,
+                borderRadius: 99, border: "none", background: T.red, color: "#fff",
+                fontSize: 12, fontWeight: 800, cursor: "pointer", lineHeight: "20px", padding: 0,
               }}
-            >
-              ✕
-            </button>
+            >✕</button>
           </div>
         ))}
 
-        {/* Camera icon — greyed out while uploading */}
-        {photos.length < maxPhotos && (
+        {/* Camera icon — visibly greyed out while uploading */}
+        {!atMax && (
           <div
             style={{
               width: 54, height: 54, borderRadius: 8, border: `2px dashed ${T.line}`,
@@ -243,22 +230,20 @@ export const MediaCapture = ({
               pointerEvents: "none",
               transition: "opacity 0.2s",
             }}
-          >
-            📷
-          </div>
+          >📷</div>
         )}
       </div>
 
-      {/* Take photo button — calls Capacitor Camera plugin directly */}
+      {/* Take photo — Capacitor Camera plugin, no file picker */}
       <button
         onClick={handleTakePhoto}
-        disabled={busyPhoto || photos.length >= maxPhotos}
+        disabled={busyPhoto || atMax}
         style={{
           padding: "9px 14px", borderRadius: 8, border: `2px dashed ${T.line}`,
           background: "#fff", color: T.mute, fontSize: 13, fontWeight: 700,
           fontFamily: "inherit",
-          opacity: (busyPhoto || photos.length >= maxPhotos) ? 0.45 : 1,
-          cursor: (busyPhoto || photos.length >= maxPhotos) ? "not-allowed" : "pointer",
+          opacity: (busyPhoto || atMax) ? 0.45 : 1,
+          cursor: (busyPhoto || atMax) ? "not-allowed" : "pointer",
         }}
       >
         {busyPhoto ? "Uploading…" : "📷 Take a photo now"}
@@ -269,7 +254,7 @@ export const MediaCapture = ({
   );
 };
 
-// Finger/mouse signature pad — draws to a canvas, uploads as a PNG on confirm
+// Finger/mouse signature pad
 export const SignaturePad = ({ onCapture, upload }) => {
   const canvasRef = useRef(null);
   const drawing = useRef(false);
@@ -316,7 +301,6 @@ export const SignaturePad = ({ onCapture, upload }) => {
     c.getContext("2d").clearRect(0, 0, c.width, c.height);
     hasDrawn.current = false;
   };
-
   const confirm = () => {
     if (!hasDrawn.current) return;
     canvasRef.current.toBlob(async (blob) => {
@@ -339,9 +323,7 @@ export const SignaturePad = ({ onCapture, upload }) => {
   return (
     <div>
       <canvas
-        ref={canvasRef}
-        width={300}
-        height={120}
+        ref={canvasRef} width={300} height={120}
         style={{ width: "100%", height: 120, border: `1.5px solid ${T.line}`, borderRadius: 8, background: "#fff", touchAction: "none" }}
         onMouseDown={start} onMouseMove={move} onMouseUp={end} onMouseLeave={end}
         onTouchStart={start} onTouchMove={move} onTouchEnd={end}
