@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, forwardRef, useImperativeHandle } from "react";
+import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
 
 export const T = {
   ink: "#111111",
@@ -154,9 +155,28 @@ export const TextInput = ({ label, value, onChange, placeholder }) => (
   </label>
 );
 
-// MediaCapture — opens the rear camera directly (no file picker).
-// Uses a dedicated ref (cameraInputRef) for the capture input, separate
-// from any other hidden inputs, so Android routes straight to the camera app.
+// Uses the Capacitor Camera plugin to open the native camera directly —
+// bypasses the WebView file picker which ignores capture="environment".
+// Falls back to a plain file input on web (browser preview / dev mode).
+const takePhoto = async () => {
+  try {
+    const photo = await Camera.getPhoto({
+      resultType: CameraResultType.DataUrl,
+      source: CameraSource.Camera,   // opens camera directly, no gallery picker
+      quality: 80,
+      correctOrientation: true,
+    });
+    // Convert dataUrl to a File so the existing upload() function works unchanged
+    const res = await fetch(photo.dataUrl);
+    const blob = await res.blob();
+    return new File([blob], `photo_${Date.now()}.jpg`, { type: "image/jpeg" });
+  } catch (e) {
+    // User cancelled or camera unavailable — return null silently
+    if (e && e.message && e.message.toLowerCase().includes("cancel")) return null;
+    throw e;
+  }
+};
+
 export const MediaCapture = ({
   photos,
   onAddPhoto,
@@ -171,21 +191,17 @@ export const MediaCapture = ({
   const [busyPhoto, setBusyPhoto] = useState(false);
   const [err, setErr] = useState(null);
 
-  // Dedicated ref for the camera-capture input — must NOT be shared with
-  // any other input or the click will trigger the wrong one.
-  const cameraInputRef = useRef(null);
-
-  const handlePhotoSelected = async (e) => {
-    const file = e.target.files && e.target.files[0];
-    e.target.value = "";
-    if (!file) return;
+  const handleTakePhoto = async () => {
+    if (busyPhoto || photos.length >= maxPhotos) return;
     setBusyPhoto(true);
     setErr(null);
     try {
+      const file = await takePhoto();
+      if (!file) return; // user cancelled
       const url = await upload(file);
       onAddPhoto(url);
     } catch (ex) {
-      setErr(ex.message || "Upload failed — check network and retry");
+      setErr(ex.message || "Camera failed — check permissions and retry");
       console.error(ex);
     } finally {
       setBusyPhoto(false);
@@ -194,16 +210,6 @@ export const MediaCapture = ({
 
   return (
     <div>
-      {/* Hidden camera input — capture="environment" forces the rear camera on Android */}
-      <input
-        ref={cameraInputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        style={{ display: "none" }}
-        onChange={handlePhotoSelected}
-      />
-
       <div style={{ fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 6 }}>
         {label} ({photos.length}/{maxPhotos})
       </div>
@@ -226,42 +232,37 @@ export const MediaCapture = ({
           </div>
         ))}
 
-        {/* Camera icon placeholder — greyed out while uploading */}
+        {/* Camera icon — greyed out while uploading */}
         {photos.length < maxPhotos && (
           <div
             style={{
               width: 54, height: 54, borderRadius: 8, border: `2px dashed ${T.line}`,
-              background: "#F0F0EB", color: T.mute, fontSize: 22, fontWeight: 700,
+              background: "#F0F0EB", fontSize: 22,
               display: "flex", alignItems: "center", justifyContent: "center",
               opacity: busyPhoto ? 0.15 : 0.5,
-              cursor: "default",
               pointerEvents: "none",
               transition: "opacity 0.2s",
             }}
-            title="Use the 'Take a photo now' button below"
           >
             📷
           </div>
         )}
       </div>
 
-      {/* Take a photo now — opens rear camera directly, disabled while uploading */}
-      <div style={{ marginTop: 8 }}>
-        <button
-          disabled={busyPhoto || photos.length >= maxPhotos}
-          onClick={() => cameraInputRef.current && cameraInputRef.current.click()}
-          style={{
-            padding: "9px 14px", borderRadius: 8, border: `2px dashed ${T.line}`,
-            background: "#fff", color: T.mute, fontSize: 13, fontWeight: 700,
-            fontFamily: "inherit",
-            opacity: (busyPhoto || photos.length >= maxPhotos) ? 0.45 : 1,
-            cursor: (busyPhoto || photos.length >= maxPhotos) ? "not-allowed" : "pointer",
-            pointerEvents: (busyPhoto || photos.length >= maxPhotos) ? "none" : "auto",
-          }}
-        >
-          {busyPhoto ? "Uploading…" : "📷 Take a photo now"}
-        </button>
-      </div>
+      {/* Take photo button — calls Capacitor Camera plugin directly */}
+      <button
+        onClick={handleTakePhoto}
+        disabled={busyPhoto || photos.length >= maxPhotos}
+        style={{
+          padding: "9px 14px", borderRadius: 8, border: `2px dashed ${T.line}`,
+          background: "#fff", color: T.mute, fontSize: 13, fontWeight: 700,
+          fontFamily: "inherit",
+          opacity: (busyPhoto || photos.length >= maxPhotos) ? 0.45 : 1,
+          cursor: (busyPhoto || photos.length >= maxPhotos) ? "not-allowed" : "pointer",
+        }}
+      >
+        {busyPhoto ? "Uploading…" : "📷 Take a photo now"}
+      </button>
 
       {err && <div style={{ fontSize: 12, color: T.red, fontWeight: 700, marginTop: 6 }}>{err}</div>}
     </div>
@@ -309,9 +310,7 @@ export const SignaturePad = ({ onCapture, upload }) => {
     ctx.stroke();
     hasDrawn.current = true;
   };
-  const end = () => {
-    drawing.current = false;
-  };
+  const end = () => { drawing.current = false; };
   const clear = () => {
     const c = canvasRef.current;
     c.getContext("2d").clearRect(0, 0, c.width, c.height);
@@ -343,29 +342,13 @@ export const SignaturePad = ({ onCapture, upload }) => {
         ref={canvasRef}
         width={300}
         height={120}
-        style={{
-          width: "100%",
-          height: 120,
-          border: `1.5px solid ${T.line}`,
-          borderRadius: 8,
-          background: "#fff",
-          touchAction: "none",
-        }}
-        onMouseDown={start}
-        onMouseMove={move}
-        onMouseUp={end}
-        onMouseLeave={end}
-        onTouchStart={start}
-        onTouchMove={move}
-        onTouchEnd={end}
+        style={{ width: "100%", height: 120, border: `1.5px solid ${T.line}`, borderRadius: 8, background: "#fff", touchAction: "none" }}
+        onMouseDown={start} onMouseMove={move} onMouseUp={end} onMouseLeave={end}
+        onTouchStart={start} onTouchMove={move} onTouchEnd={end}
       />
       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-        <Btn kind="ghost" small onClick={clear}>
-          Clear
-        </Btn>
-        <Btn small onClick={confirm} disabled={busy}>
-          {busy ? "Saving…" : "Use this signature"}
-        </Btn>
+        <Btn kind="ghost" small onClick={clear}>Clear</Btn>
+        <Btn small onClick={confirm} disabled={busy}>{busy ? "Saving…" : "Use this signature"}</Btn>
       </div>
       {err && <div style={{ fontSize: 12, color: T.red, fontWeight: 700, marginTop: 6 }}>{err}</div>}
     </div>
