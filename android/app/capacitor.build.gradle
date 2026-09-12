@@ -11,6 +11,7 @@ apply from: "../capacitor-cordova-android-plugins/cordova.variables.gradle"
 dependencies {
     implementation project(':capacitor-camera')
     implementation project(':capacitor-push-notifications')
+    implementation project(':capgo-capacitor-updater')
 
 }
 apply from: "../../node_modules/onesignal-cordova-plugin/build-extras-onesignal.gradle"

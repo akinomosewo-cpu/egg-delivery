@@ -1,5 +1,10 @@
 {
-  "appId": "com.cosng.app",
+  "appId": "com.cosng.cosng",
   "appName": "COSNG DRIVERS",
-  "webDir": "dist"
+  "webDir": "dist",
+  "plugins": {
+    "CapacitorUpdater": {
+      "appId": "com.cosng.cosng"
+    }
+  }
 }
