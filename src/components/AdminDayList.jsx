@@ -16,8 +16,10 @@ const STATUS_COLOR = {
   delivered: [T.green, T.greenBg],
 };
 
-export default function AdminDayList({ drivers, customers, helpers, deliveries }) {
+export default function AdminDayList({ drivers, customers, helpers, deliveries, hiddenDeliveries = [], onHide, onPostpone, onUnhide }) {
   const [expandedId, setExpandedId] = useState(null);
+  const [confirmId, setConfirmId] = useState(null);
+  const [showHidden, setShowHidden] = useState(false);
   const rows = [...deliveries].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
   const totals = {
@@ -140,8 +142,34 @@ export default function AdminDayList({ drivers, customers, helpers, deliveries }
                 </div>
               )}
               {d.status !== "delivered" && (
-                <div style={{ fontSize: 11, color: T.mute, marginTop: 4, fontWeight: 700 }}>
-                  {isOpen ? "▲ Hide details" : "▼ View details"}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+                  <div style={{ fontSize: 11, color: T.mute, fontWeight: 700 }}>
+                    {isOpen ? "▲ Hide details" : "▼ View details"}
+                  </div>
+                  {/* Admin controls — stop drivers cherry-picking routes */}
+                  <div style={{ display: "flex", gap: 6 }} onClick={(e) => e.stopPropagation()}>
+                    {confirmId === d.id ? (
+                      <>
+                        <button
+                          onClick={() => { onHide && onHide(d.id); setConfirmId(null); }}
+                          style={{ fontSize: 11, fontWeight: 700, padding: "4px 8px", borderRadius: 6, border: "none", background: "#FBE7E2", color: T.red, cursor: "pointer", fontFamily: "inherit" }}
+                        >🚫 Hide today</button>
+                        <button
+                          onClick={() => { onPostpone && onPostpone(d.id); setConfirmId(null); }}
+                          style={{ fontSize: 11, fontWeight: 700, padding: "4px 8px", borderRadius: 6, border: "none", background: T.tan, color: T.ink, cursor: "pointer", fontFamily: "inherit" }}
+                        >📅 Next day</button>
+                        <button
+                          onClick={() => setConfirmId(null)}
+                          style={{ fontSize: 11, fontWeight: 700, padding: "4px 8px", borderRadius: 6, border: "none", background: "transparent", color: T.mute, cursor: "pointer", fontFamily: "inherit" }}
+                        >✕</button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmId(d.id)}
+                        style={{ fontSize: 11, fontWeight: 700, padding: "4px 8px", borderRadius: 6, border: `1px solid ${T.line}`, background: "#fff", color: T.mute, cursor: "pointer", fontFamily: "inherit" }}
+                      >⋯ Manage</button>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -238,17 +266,61 @@ export default function AdminDayList({ drivers, customers, helpers, deliveries }
       </div>
 
       {rows.length > 0 && (
-        <div
-          style={{
-            background: T.ink,
-            borderRadius: 12,
-            padding: "12px 16px",
-            display: "flex",
-            justifyContent: "space-between",
-          }}
-        >
+        <div style={{ background: T.ink, borderRadius: 12, padding: "12px 16px", display: "flex", justifyContent: "space-between" }}>
           <span style={{ color: "#C9C9C0", fontSize: 13, fontWeight: 600 }}>Total collected today</span>
           <span style={{ color: T.yolk, fontSize: 16, fontWeight: 900 }}>{money(totals.payment)}</span>
+        </div>
+      )}
+
+      {/* Hidden deliveries — admin can review and unhide */}
+      {hiddenDeliveries.length > 0 && (
+        <div style={{ border: `1.5px dashed ${T.mute}`, borderRadius: 12, overflow: "hidden" }}>
+          <button
+            onClick={() => setShowHidden((v) => !v)}
+            style={{
+              width: "100%", textAlign: "left", padding: "12px 14px",
+              background: T.tan, border: "none", cursor: "pointer",
+              fontFamily: "inherit", fontWeight: 800, fontSize: 14, color: T.mute,
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+            }}
+          >
+            <span>🚫 Hidden deliveries ({hiddenDeliveries.length})</span>
+            <span style={{ fontSize: 12 }}>{showHidden ? "▲ Collapse" : "▼ Show"}</span>
+          </button>
+
+          {showHidden && hiddenDeliveries.map((d) => {
+            const c = customers.find((x) => x.id === d.customer_id);
+            const drv = drivers.find((x) => x.id === d.driver_id);
+            const isPostponed = d.delivery_date && d.delivery_date > new Date().toISOString().slice(0, 10);
+            return (
+              <div
+                key={d.id}
+                style={{
+                  padding: "10px 14px", borderTop: `1px solid ${T.line}`,
+                  display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8,
+                  background: "#fff",
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: T.ink }}>{c ? c.name : "…"}</div>
+                  <div style={{ fontSize: 12, color: T.mute }}>
+                    {drv ? drv.name : "Unclaimed"} · {fmtQty(d.crates_assigned, 0)}
+                    {isPostponed && <span style={{ marginLeft: 6, color: T.yolkDark, fontWeight: 700 }}>📅 Moved to {d.delivery_date}</span>}
+                  </div>
+                </div>
+                <button
+                  onClick={() => onUnhide && onUnhide(d.id)}
+                  style={{
+                    fontSize: 12, fontWeight: 700, padding: "6px 10px", borderRadius: 8,
+                    border: `1.5px solid ${T.line}`, background: T.greenBg, color: T.green,
+                    cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
+                  }}
+                >
+                  ✓ Unhide
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
