@@ -51,7 +51,7 @@ export default function App() {
         supabase.from("drivers").select("*").eq("active", true).order("name"),
         supabase.from("customers").select("*").eq("active", true).order("name"),
         supabase.from("helpers").select("*").eq("active", true).order("name"),
-        supabase.from("deliveries").select("*").eq("delivery_date", today()).not("hidden_until", "is", null).order("created_at"),
+        supabase.from("deliveries").select("*").eq("delivery_date", today()).is("hidden_until", null).order("created_at"),
         supabase.from("deliveries").select("*").gte("hidden_until", today()).order("delivery_date"),
         supabase.from("crate_returns").select("*").eq("return_date", today()),
         supabase.from("delivery_events").select("*").order("event_date", { ascending: false }).order("created_at", { ascending: true }).limit(300),
@@ -223,7 +223,7 @@ export default function App() {
   };
 
   const unhideDelivery = async (id) => {
-    const { error } = await supabase.from("deliveries").update({ hidden_until: null }).eq("id", id);
+    const { error } = await supabase.from("deliveries").update({ hidden_until: null, delivery_date: today() }).eq("id", id);
     if (error) alert("Could not unhide: " + error.message);
     else loadAll();
   };
