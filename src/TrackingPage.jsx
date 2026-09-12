@@ -13,9 +13,19 @@ const pin = (color) =>
 const driverPin = pin("#4E8A00");
 const customerPin = pin("#111111");
 
-// This page is deliberately minimal: it only ever fetches the one delivery's
-// status, the driver's current position, and the customer's position — no
-// prices, no other customers, no admin data of any kind, ever.
+function distanceKm(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+const AREA_RADIUS_KM = 1.5;
+const GENERIC_AREAS = ["Gwarimpa", "Mpape", "Jahi", "Jabi", "Life Camp", "Maitama", "Farmers Market", "Wuse", "Wuse 2", "Abuja"];
+
 export default function TrackingPage({ deliveryId }) {
   const mapRef = useRef(null);
   const leafletMapRef = useRef(null);
@@ -23,6 +33,7 @@ export default function TrackingPage({ deliveryId }) {
   const [driverPos, setDriverPos] = useState(null);
   const [customerPos, setCustomerPos] = useState(null);
   const [customerName, setCustomerName] = useState("");
+  const smsSentRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -35,39 +46,52 @@ export default function TrackingPage({ deliveryId }) {
         .single();
 
       if (cancelled) return;
-      if (error || !delivery) {
-        setStatus("notfound");
-        return;
-      }
-      if (delivery.status === "delivered") {
-        setStatus("delivered");
-        return;
-      }
-      if (!delivery.driver_id) {
-        setStatus("loading");
-        return;
-      }
+      if (error || !delivery) { setStatus("notfound"); return; }
+      if (delivery.status === "delivered") { setStatus("delivered"); return; }
+      if (!delivery.driver_id) { setStatus("loading"); return; }
 
       const [{ data: loc }, { data: customer }] = await Promise.all([
         supabase.from("driver_locations").select("lat, lng").eq("driver_id", delivery.driver_id).single(),
-        supabase.from("customers").select("name, lat, lng").eq("id", delivery.customer_id).single(),
+        supabase.from("customers").select("name, lat, lng, area, phone, address").eq("id", delivery.customer_id).single(),
       ]);
 
       if (cancelled) return;
+
       if (customer) {
         setCustomerName(customer.name || "");
         if (customer.lat != null && customer.lng != null) setCustomerPos([customer.lat, customer.lng]);
+
+        if (
+          !smsSentRef.current &&
+          loc &&
+          customer.lat != null &&
+          customer.area &&
+          GENERIC_AREAS.includes(customer.area) &&
+          !customer.address
+        ) {
+          const km = distanceKm(loc.lat, loc.lng, customer.lat, customer.lng);
+          if (km <= AREA_RADIUS_KM) {
+            smsSentRef.current = true;
+            supabase.functions.invoke("notify", {
+              body: {
+                type: "area_arrival",
+                deliveryId,
+                customerName: customer.name,
+                customerPhone: customer.phone,
+                area: customer.area,
+              },
+            }).catch((e) => console.error("Area SMS failed:", e));
+          }
+        }
       }
+
       if (loc) setDriverPos([loc.lat, loc.lng]);
       setStatus("tracking");
     };
 
     load();
     const interval = setInterval(load, 8000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
+    return () => { cancelled = true; clearInterval(interval); };
   }, [deliveryId]);
 
   useEffect(() => {
@@ -84,42 +108,25 @@ export default function TrackingPage({ deliveryId }) {
   useEffect(() => {
     const map = leafletMapRef.current;
     if (!map) return;
-    map.eachLayer((layer) => {
-      if (layer instanceof L.Marker) map.removeLayer(layer);
-    });
+    map.eachLayer((layer) => { if (layer instanceof L.Marker) map.removeLayer(layer); });
     const points = [];
-    if (driverPos) {
-      L.marker(driverPos, { icon: driverPin }).addTo(map).bindPopup("Driver");
-      points.push(driverPos);
-    }
-    if (customerPos) {
-      L.marker(customerPos, { icon: customerPin }).addTo(map).bindPopup(customerName || "You");
-      points.push(customerPos);
-    }
-    if (points.length === 2) {
-      map.fitBounds(L.latLngBounds(points).pad(0.4), { maxZoom: 15 });
-    } else if (points.length === 1) {
-      map.setView(points[0], 14);
-    }
+    if (driverPos) { L.marker(driverPos, { icon: driverPin }).addTo(map).bindPopup("Driver"); points.push(driverPos); }
+    if (customerPos) { L.marker(customerPos, { icon: customerPin }).addTo(map).bindPopup(customerName || "You"); points.push(customerPos); }
+    if (points.length === 2) map.fitBounds(L.latLngBounds(points).pad(0.4), { maxZoom: 15 });
+    else if (points.length === 1) map.setView(points[0], 14);
   }, [driverPos, customerPos, customerName]);
 
   const wrap = { minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20, fontFamily: "system-ui, sans-serif", background: "#FAFAF8" };
 
-  if (status === "loading") {
-    return <div style={wrap}><div style={{ fontSize: 15, color: "#75756E" }}>Getting things ready…</div></div>;
-  }
-  if (status === "notfound") {
-    return <div style={wrap}><div style={{ fontSize: 15, color: "#75756E" }}>This tracking link isn't valid.</div></div>;
-  }
-  if (status === "delivered") {
-    return (
-      <div style={wrap}>
-        <div style={{ fontSize: 40, marginBottom: 10 }}>✅</div>
-        <div style={{ fontSize: 17, fontWeight: 800 }}>Delivery completed</div>
-        <div style={{ fontSize: 13, color: "#75756E", marginTop: 4 }}>This tracking link is no longer active.</div>
-      </div>
-    );
-  }
+  if (status === "loading") return <div style={wrap}><div style={{ fontSize: 15, color: "#75756E" }}>Getting things ready…</div></div>;
+  if (status === "notfound") return <div style={wrap}><div style={{ fontSize: 15, color: "#75756E" }}>This tracking link isn't valid.</div></div>;
+  if (status === "delivered") return (
+    <div style={wrap}>
+      <div style={{ fontSize: 40, marginBottom: 10 }}>✅</div>
+      <div style={{ fontSize: 17, fontWeight: 800 }}>Delivery completed</div>
+      <div style={{ fontSize: 13, color: "#75756E", marginTop: 4 }}>This tracking link is no longer active.</div>
+    </div>
+  );
 
   return (
     <div style={{ minHeight: "100vh", background: "#FAFAF8", fontFamily: "system-ui, sans-serif" }}>
