@@ -29,6 +29,7 @@ export default function App() {
   const [customers, setCustomers] = useState([]);
   const [helpers, setHelpers] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
+  const [hiddenDeliveries, setHiddenDeliveries] = useState([]);
   const [crateReturns, setCrateReturns] = useState([]);
   const [events, setEvents] = useState([]);
   const [openDebts, setOpenDebts] = useState([]); // crates owed by customers, not yet collected back
@@ -46,11 +47,12 @@ export default function App() {
   // ---- Load everything for today ----
   const loadAll = useCallback(async () => {
     try {
-      const [drv, cus, hlp, del, ret, evt, debts, locs, stock, allDel, counts, payments] = await Promise.all([
+      const [drv, cus, hlp, del, hiddenDel, ret, evt, debts, locs, stock, allDel, counts, payments] = await Promise.all([
         supabase.from("drivers").select("*").eq("active", true).order("name"),
         supabase.from("customers").select("*").eq("active", true).order("name"),
         supabase.from("helpers").select("*").eq("active", true).order("name"),
-        supabase.from("deliveries").select("*").eq("delivery_date", today()).order("created_at"),
+        supabase.from("deliveries").select("*").eq("delivery_date", today()).not("hidden_until", "is", null).order("created_at"),
+        supabase.from("deliveries").select("*").gte("hidden_until", today()).order("delivery_date"),
         supabase.from("crate_returns").select("*").eq("return_date", today()),
         supabase.from("delivery_events").select("*").order("event_date", { ascending: false }).order("created_at", { ascending: true }).limit(300),
         supabase.from("deliveries").select("*").gt("missing_crates", 0).eq("missing_crates_resolved", false).order("delivery_date"),
@@ -60,12 +62,13 @@ export default function App() {
         supabase.from("stock_counts").select("*").order("created_at", { ascending: false }).limit(50),
         supabase.from("customer_payments").select("*").order("created_at", { ascending: false }),
       ]);
-      const firstError = drv.error || cus.error || hlp.error || del.error || ret.error || evt.error || debts.error || locs.error || stock.error || allDel.error || counts.error || payments.error;
+      const firstError = drv.error || cus.error || hlp.error || del.error || hiddenDel.error || ret.error || evt.error || debts.error || locs.error || stock.error || allDel.error || counts.error || payments.error;
       if (firstError) throw firstError;
       setDrivers(drv.data);
       setCustomers(cus.data);
       setHelpers(hlp.data);
       setDeliveries(del.data);
+      setHiddenDeliveries(hiddenDel.data || []);
       setCrateReturns(ret.data);
       setEvents(evt.data);
       setOpenDebts(debts.data);
@@ -200,6 +203,28 @@ export default function App() {
   const removeDelivery = async (id) => {
     const { error } = await supabase.from("deliveries").delete().eq("id", id).eq("status", "pending");
     if (error) alert("Could not remove: " + error.message);
+    else loadAll();
+  };
+
+
+  const hideDelivery = async (id) => {
+    const { error } = await supabase.from("deliveries").update({ hidden_until: today() }).eq("id", id);
+    if (error) alert("Could not hide: " + error.message);
+    else loadAll();
+  };
+
+  const postponeDelivery = async (id) => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().slice(0, 10);
+    const { error } = await supabase.from("deliveries").update({ hidden_until: tomorrowStr, delivery_date: tomorrowStr }).eq("id", id);
+    if (error) alert("Could not postpone: " + error.message);
+    else loadAll();
+  };
+
+  const unhideDelivery = async (id) => {
+    const { error } = await supabase.from("deliveries").update({ hidden_until: null }).eq("id", id);
+    if (error) alert("Could not unhide: " + error.message);
     else loadAll();
   };
 
@@ -873,6 +898,9 @@ export default function App() {
                 helpers={helpers}
                 deliveries={deliveries}
                 driverLocations={driverLocations}
+                onHide={hideDelivery}
+                onPostpone={postponeDelivery}
+                onUnhide={unhideDelivery}
               />
             ) : adminTab === "map" ? (
               <AdminMap drivers={drivers} customers={customers} driverLocations={driverLocations} deliveries={deliveries} geocodeCustomer={geocodeCustomer} />
@@ -885,7 +913,7 @@ export default function App() {
             ) : adminTab === "calendar" ? (
               <AdminCalendar customers={customers} allDeliveries={allDeliveriesForStock} />
             ) : adminTab === "today" ? (
-              <AdminDayList drivers={drivers} customers={customers} helpers={helpers} deliveries={deliveries} />
+              <AdminDayList drivers={drivers} customers={customers} helpers={helpers} deliveries={deliveries} hiddenDeliveries={hiddenDeliveries} onHide={hideDelivery} onPostpone={postponeDelivery} onUnhide={unhideDelivery} />
             ) : adminTab === "missing" ? (
               <AdminMissingCrates
                 customers={customers}
