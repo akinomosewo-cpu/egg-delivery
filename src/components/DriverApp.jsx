@@ -59,6 +59,29 @@ export default function DriverApp({
   const [payment, setPayment] = useState("");
   const [receiptPhoto, setReceiptPhoto] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [offlineToast, setOfflineToast] = useState(null);
+
+  const showOfflineToast = useCallback((msg) => {
+    setOfflineToast(msg);
+    setTimeout(() => setOfflineToast(null), 5000);
+  }, []);
+
+  const withOfflineQueue = useCallback(
+    (actionName, fn) =>
+      async (...args) => {
+        try {
+          return await fn(...args);
+        } catch (err) {
+          if (looksOffline(err)) {
+            await queueAction(actionName, args);
+            showOfflineToast("📡 No signal — action saved and will send automatically once you're back online.");
+          } else {
+            throw err;
+          }
+        }
+      },
+    [showOfflineToast]
+  );
   const [collectingDebtId, setCollectingDebtId] = useState(null);
   const [collectingDebtType, setCollectingDebtType] = useState(null); // "missing" | "empty"
   const [collectAmount, setCollectAmount] = useState("");
@@ -163,6 +186,23 @@ export default function DriverApp({
   useEffect(() => {
     updateDriverLocationRef.current = updateDriverLocation;
   }, [updateDriverLocation]);
+
+  // Replay queued status actions when signal returns
+  useEffect(() => {
+    const replay = async () => {
+      let actions;
+      try { actions = await getQueuedActions(); } catch { return; }
+      for (const item of actions) {
+        try {
+          if (item.actionName === "updateStatus") await updateStatus(...item.args);
+          await removeQueuedAction(item.id);
+        } catch { /* leave for next attempt */ }
+      }
+    };
+    if (navigator.onLine) replay();
+    window.addEventListener("online", replay);
+    return () => window.removeEventListener("online", replay);
+  }, [updateStatus]);
 
   // Quietly report this driver's live position while they're logged in —
   // only works while this screen is open and the phone is unlocked.
@@ -377,8 +417,9 @@ export default function DriverApp({
               disabled={busy}
               onClick={async () => {
                 setBusy(true);
-                await updateStatus(stop.id, "in_transit", { driver_id: driverId, customer_id: stop.customer_id });
-                setBusy(false);
+                try {
+                  await withOfflineQueue("updateStatus", updateStatus)(stop.id, "in_transit", { driver_id: driverId, customer_id: stop.customer_id });
+                } catch { /* already handled */ } finally { setBusy(false); }
               }}
             >
               {busy ? "Starting…" : `Start route to ${name}`}
@@ -391,8 +432,9 @@ export default function DriverApp({
               disabled={busy}
               onClick={async () => {
                 setBusy(true);
-                await updateStatus(stop.id, "arrived", { driver_id: driverId, customer_id: stop.customer_id });
-                setBusy(false);
+                try {
+                  await withOfflineQueue("updateStatus", updateStatus)(stop.id, "arrived", { driver_id: driverId, customer_id: stop.customer_id });
+                } catch { /* already handled */ } finally { setBusy(false); }
               }}
             >
               {busy ? "Updating…" : "Arrived at customer's location"}
@@ -612,21 +654,11 @@ export default function DriverApp({
           if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, owedDeliveryIds: [], backorder: 0, emptyLeft: 0, emptyLeftDate: null, emptyLeftDeliveryId: null };
           byCustomer[key].backorder += Number(d.backorder_crates);
         }
-        // Only flag empty_crates_left if:
-        //  1. It's > 0 (crates actually left behind)
-        //  2. It's from the last 30 days (avoids stale historical rows)
-        //  3. Not already resolved (picked_up >= left means it's been collected)
-        const emptyLeftVal = Number(d.empty_crates_left || 0);
-        const emptyPickedVal = Number(d.empty_crates_picked_up || 0);
-        const deliveryAge = d.delivery_date
-          ? (Date.now() - new Date(d.delivery_date).getTime()) / (1000 * 60 * 60 * 24)
-          : 999;
-        const alreadyResolved = emptyPickedVal >= emptyLeftVal;
-        if (emptyLeftVal > 0 && deliveryAge <= 30 && !alreadyResolved) {
+        if (Number(d.empty_crates_left || 0) > 0) {
           if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, owedDeliveryIds: [], backorder: 0, emptyLeft: 0, emptyLeftDate: null, emptyLeftDeliveryId: null };
           // keep only the most recent stop's snapshot for this customer
           if (!byCustomer[key].emptyLeftDate || d.delivery_date > byCustomer[key].emptyLeftDate) {
-            byCustomer[key].emptyLeft = emptyLeftVal;
+            byCustomer[key].emptyLeft = Number(d.empty_crates_left);
             byCustomer[key].emptyLeftDate = d.delivery_date;
             byCustomer[key].emptyLeftDeliveryId = d.id;
           }
@@ -639,6 +671,14 @@ export default function DriverApp({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {offlineToast && (
+        <div style={{
+          background: "#1a2a0a", color: "#c8f080", fontSize: 13, fontWeight: 600,
+          padding: "10px 14px", borderRadius: 10,
+        }}>
+          {offlineToast}
+        </div>
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ fontWeight: 800, fontSize: 17 }}>{drv ? drv.name : ""}</div>
         <Btn kind="ghost" small onClick={() => setDriverId(null)}>
@@ -907,7 +947,7 @@ export default function DriverApp({
         return (
           <div key={type} style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 14 }}>
             <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>Report {label} warehouse count</div>
-            <div style={{ fontSize: 12, color: T.mute, marginBottom: 10 }}>{question} A photo is required as proof.</div>
+            <div style={{ fontSize: 12, color: T.mute, marginBottom: 10 }}>{question} A photo and video are both required as proof.</div>
             <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
               <NumInput label="Small" value={s.small} onChange={(v) => setField("small", v)} width={90} />
               <NumInput label="Medium" value={s.medium} onChange={(v) => setField("medium", v)} width={90} />
@@ -923,7 +963,7 @@ export default function DriverApp({
                 onRemoveVideo={() => setField("video", null)}
                 upload={uploadPhoto}
                 maxPhotos={1}
-                label="Photo proof (required)"
+                label="Photo and video proof (both required)"
               />
             </div>
             <Btn
