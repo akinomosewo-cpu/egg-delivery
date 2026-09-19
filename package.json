@@ -16,11 +16,8 @@
     "@capacitor/core": "^8.5.0",
     "@capacitor/ios": "^8.5.0",
     "@capacitor/push-notifications": "^8.1.2",
-<<<<<<< HEAD
     "@capgo/capacitor-updater": "^8.51.15",
-=======
     "@capgo/cli": "^8.51.0",
->>>>>>> 443f9721589016b1ae25d9200ca96807df79f082
     "@supabase/supabase-js": "^2.110.8",
     "leaflet": "^1.9.4",
     "onesignal-cordova-plugin": "^5.5.2",
