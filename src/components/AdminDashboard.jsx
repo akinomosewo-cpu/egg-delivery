@@ -24,8 +24,9 @@ const STALE_MINUTES = 20;
 
 const money = (n) => `₦${Number(n || 0).toLocaleString("en-NG")}`;
 
-export default function AdminDashboard({ drivers, customers, helpers, deliveries, driverLocations }) {
+export default function AdminDashboard({ drivers, customers, helpers, deliveries, driverLocations, onHide, onPostpone, onUnhide }) {
   const [expandedId, setExpandedId] = useState(null);
+  const [confirmId, setConfirmId] = useState(null);
   const [, forceRedraw] = useState(0);
   const mapRef = useRef(null);
   const leafletMapRef = useRef(null);
@@ -177,9 +178,21 @@ export default function AdminDashboard({ drivers, customers, helpers, deliveries
             {unclaimed.map((d) => {
               const c = customers.find((x) => x.id === d.customer_id);
               return (
-                <div key={d.id} style={{ padding: "10px 14px", borderBottom: `1px solid ${T.line}`, display: "flex", justifyContent: "space-between" }}>
+                <div key={d.id} style={{ padding: "10px 14px", borderBottom: `1px solid ${T.line}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                   <span style={{ fontWeight: 700, fontSize: 14 }}>{c ? c.name : "…"}</span>
-                  <span style={{ fontSize: 13, color: T.mute }}>{fmtQty(d.crates_assigned, d.eggs_assigned)}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 13, color: T.mute }}>{fmtQty(d.crates_assigned, d.eggs_assigned)}</span>
+                    {confirmId === d.id ? (
+                      <div style={{ display: "flex", gap: 4 }}>
+                        <button onClick={() => { onHide && onHide(d.id); setConfirmId(null); }} style={{ fontSize: 11, fontWeight: 700, padding: "4px 8px", borderRadius: 6, border: "none", background: "#FBE7E2", color: T.red, cursor: "pointer", fontFamily: "inherit" }}>🚫 Hide</button>
+                        <button onClick={() => { onPostpone && onPostpone(d.id); setConfirmId(null); }} style={{ fontSize: 11, fontWeight: 700, padding: "4px 8px", borderRadius: 6, border: "none", background: T.tan, color: T.ink, cursor: "pointer", fontFamily: "inherit" }}>📅 Next day</button>
+                        {d.hidden_until && <button onClick={() => { onUnhide && onUnhide(d.id); setConfirmId(null); }} style={{ fontSize: 11, fontWeight: 700, padding: "4px 8px", borderRadius: 6, border: "none", background: T.greenBg, color: T.green, cursor: "pointer", fontFamily: "inherit" }}>✓ Unhide</button>}
+                        <button onClick={() => setConfirmId(null)} style={{ fontSize: 11, fontWeight: 700, padding: "4px 8px", borderRadius: 6, border: "none", background: "transparent", color: T.mute, cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setConfirmId(d.id)} style={{ fontSize: 11, fontWeight: 700, padding: "4px 6px", borderRadius: 6, border: `1px solid ${T.line}`, background: "#fff", color: T.mute, cursor: "pointer", fontFamily: "inherit" }}>⋯</button>
+                    )}
+                  </div>
                 </div>
               );
             })}
