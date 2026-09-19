@@ -203,11 +203,22 @@ export const MediaCapture = ({
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
         {photos.map((p, i) => (
           <div key={i} style={{ position: "relative" }}>
-            <img
-              src={p}
-              alt={`photo ${i + 1}`}
-              style={{ width: 54, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }}
-            />
+            {p.startsWith("pending://") ? (
+              <div style={{
+                width: 54, height: 54, borderRadius: 8, border: `1.5px solid ${T.yolk}`,
+                background: "#FFF8E6", display: "flex", flexDirection: "column",
+                alignItems: "center", justifyContent: "center", fontSize: 10, color: T.yolkDark, fontWeight: 700,
+              }}>
+                <div>📸</div>
+                <div>Queued</div>
+              </div>
+            ) : (
+              <img
+                src={p}
+                alt={`photo ${i + 1}`}
+                style={{ width: 54, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }}
+              />
+            )}
             <button
               onClick={() => onRemovePhoto(i)}
               style={{

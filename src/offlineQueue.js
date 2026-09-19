@@ -63,3 +63,61 @@ export function looksOffline(error) {
   const msg = (error && error.message) || "";
   return /fetch|network|failed to fetch|NetworkError/i.test(msg);
 }
+
+// ---- Pending photo blobs ----
+// When signal is too weak for an upload, we store the raw file here
+// (keyed by a temp pending://id URL) and upload it for real on reconnect.
+const PHOTO_STORE = "pendingPhotos";
+
+function openPhotoStore() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 2); // bump version to add the new store
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE)) {
+        db.createObjectStore(STORE, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains(PHOTO_STORE)) {
+        db.createObjectStore(PHOTO_STORE, { keyPath: "id" });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function savePendingPhoto(file) {
+  const id = `pending://${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const db = await openPhotoStore();
+  const arrayBuffer = await file.arrayBuffer();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PHOTO_STORE, "readwrite");
+    tx.objectStore(PHOTO_STORE).put({ id, buffer: arrayBuffer, type: file.type, name: file.name });
+    tx.oncomplete = () => resolve(id); // returns the pending:// URL
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function getPendingPhotos() {
+  const db = await openPhotoStore();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PHOTO_STORE, "readonly");
+    const req = tx.objectStore(PHOTO_STORE).getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function removePendingPhoto(id) {
+  const db = await openPhotoStore();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PHOTO_STORE, "readwrite");
+    tx.objectStore(PHOTO_STORE).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export function isPendingUrl(url) {
+  return typeof url === "string" && url.startsWith("pending://");
+}

@@ -1,6 +1,7 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { supabase, today, logEvent, requestNotificationPermission, notify } from "./supabase";
 import { queueAction, getQueuedActions, removeQueuedAction, queueCount, looksOffline } from "./offlineQueue";
+import { initNotifications, tagAsAdmin } from "./notifications";
 import { T } from "./components/ui";
 import AdminPlan from "./components/AdminPlan";
 import AdminDashboard from "./components/AdminDashboard";
@@ -29,6 +30,7 @@ export default function App() {
   const [customers, setCustomers] = useState([]);
   const [helpers, setHelpers] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
+  const [hiddenDeliveries, setHiddenDeliveries] = useState([]);
   const [crateReturns, setCrateReturns] = useState([]);
   const [events, setEvents] = useState([]);
   const [openDebts, setOpenDebts] = useState([]); // crates owed by customers, not yet collected back
@@ -43,14 +45,18 @@ export default function App() {
   const [pendingSync, setPendingSync] = useState(0);
   const [error, setError] = useState(null);
 
+  // Initialise native push notifications once on mount — safe no-op on web
+  useEffect(() => { initNotifications(); }, []);
+
   // ---- Load everything for today ----
   const loadAll = useCallback(async () => {
     try {
-      const [drv, cus, hlp, del, ret, evt, debts, locs, stock, allDel, counts, payments] = await Promise.all([
+      const [drv, cus, hlp, del, hiddenDel, ret, evt, debts, locs, stock, allDel, counts, payments] = await Promise.all([
         supabase.from("drivers").select("*").eq("active", true).order("name"),
         supabase.from("customers").select("*").eq("active", true).order("name"),
         supabase.from("helpers").select("*").eq("active", true).order("name"),
-        supabase.from("deliveries").select("*").eq("delivery_date", today()).order("created_at"),
+        supabase.from("deliveries").select("*").eq("delivery_date", today()).is("hidden_until", null).order("created_at"),
+        supabase.from("deliveries").select("*").gte("hidden_until", today()).order("delivery_date"),
         supabase.from("crate_returns").select("*").eq("return_date", today()),
         supabase.from("delivery_events").select("*").order("event_date", { ascending: false }).order("created_at", { ascending: true }).limit(300),
         supabase.from("deliveries").select("*").gt("missing_crates", 0).eq("missing_crates_resolved", false).order("delivery_date"),
@@ -60,12 +66,13 @@ export default function App() {
         supabase.from("stock_counts").select("*").order("created_at", { ascending: false }).limit(50),
         supabase.from("customer_payments").select("*").order("created_at", { ascending: false }),
       ]);
-      const firstError = drv.error || cus.error || hlp.error || del.error || ret.error || evt.error || debts.error || locs.error || stock.error || allDel.error || counts.error || payments.error;
+      const firstError = drv.error || cus.error || hlp.error || del.error || hiddenDel.error || ret.error || evt.error || debts.error || locs.error || stock.error || allDel.error || counts.error || payments.error;
       if (firstError) throw firstError;
       setDrivers(drv.data);
       setCustomers(cus.data);
       setHelpers(hlp.data);
       setDeliveries(del.data);
+      setHiddenDeliveries(hiddenDel.data || []);
       setCrateReturns(ret.data);
       setEvents(evt.data);
       setOpenDebts(debts.data);
@@ -84,8 +91,12 @@ export default function App() {
   }, []);
 
   // ---- Realtime: any change re-syncs everyone, and pings the admin on new deliveries ----
-  useEffect(() => {
-    loadAll();
+  const channelRef = useRef(null);
+
+  const subscribeRealtime = useCallback(() => {
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+    }
     const channel = supabase
       .channel("live-updates")
       .on("postgres_changes", { event: "*", schema: "public", table: "deliveries" }, loadAll)
@@ -101,8 +112,16 @@ export default function App() {
         if (row.event_type === "crates_submitted") notify("Crates submitted", "A driver sent in their crate count.");
       })
       .subscribe();
-    return () => supabase.removeChannel(channel);
+    channelRef.current = channel;
   }, [loadAll]);
+
+  useEffect(() => {
+    loadAll();
+    subscribeRealtime();
+    return () => {
+      if (channelRef.current) supabase.removeChannel(channelRef.current);
+    };
+  }, [loadAll, subscribeRealtime]);
 
   // Backup for realtime: silently re-fetch every 5 seconds in case a realtime
   // event gets missed (weak signal, brief disconnect, etc). No spinner, no
@@ -118,6 +137,45 @@ export default function App() {
   // and check periodically too (some browsers don't fire 'online' reliably)
   const processQueue = useCallback(async () => {
     if (!navigator.onLine) return;
+
+    // Step 1: upload any locally-saved photos first, swap pending:// URLs
+    // with real ones before processing the actions that reference them.
+    try {
+      const { getPendingPhotos, removePendingPhoto, isPendingUrl } = await import("./offlineQueue");
+      const pending = await getPendingPhotos();
+      for (const p of pending) {
+        try {
+          const file = new File([p.buffer], p.name, { type: p.type });
+          const ext = p.name.split(".").pop() || "jpg";
+          const path = `${today()}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+          const { error } = await supabase.storage.from("delivery-photos").upload(path, file);
+          if (!error) {
+            const { data } = supabase.storage.from("delivery-photos").getPublicUrl(path);
+            // Replace pending:// reference with real URL in every queued action
+            const { getQueuedActions: getAll } = await import("./offlineQueue");
+            const actions = await getAll();
+            for (const action of actions) {
+              const updated = JSON.parse(JSON.stringify(action.args, (k, v) =>
+                typeof v === "string" && v === p.id ? data.publicUrl : v
+              ));
+              if (JSON.stringify(updated) !== JSON.stringify(action.args)) {
+                const { queueAction: requeue, removeQueuedAction: rmAction } = await import("./offlineQueue");
+                await rmAction(action.id);
+                await requeue(action.actionName, updated);
+              }
+            }
+            await removePendingPhoto(p.id);
+          }
+        } catch (e) {
+          console.warn("Pending photo upload failed, will retry:", e.message);
+          break; // wait for next cycle
+        }
+      }
+    } catch (e) {
+      console.warn("processQueue photo step failed:", e.message);
+    }
+
+    // Step 2: process queued actions as before
     let items;
     try {
       items = await getQueuedActions();
@@ -132,8 +190,8 @@ export default function App() {
         }
         await removeQueuedAction(item.id);
       } catch (e) {
-        if (!looksOffline(e)) await removeQueuedAction(item.id); // a real error, not just offline — drop it, don't retry forever
-        break; // stop here, try the rest next time
+        if (!looksOffline(e)) await removeQueuedAction(item.id);
+        break;
       }
     }
     const remaining = await queueCount();
@@ -145,6 +203,8 @@ export default function App() {
     const goOnline = () => {
       setIsOnline(true);
       processQueue();
+      subscribeRealtime(); // reconnect the websocket — it may have dropped while offline
+      loadAll(); // immediately re-fetch so no stale data shows
     };
     const goOffline = () => setIsOnline(false);
     window.addEventListener("online", goOnline);
@@ -157,7 +217,7 @@ export default function App() {
       window.removeEventListener("offline", goOffline);
       clearInterval(interval);
     };
-  }, [processQueue]);
+  }, [processQueue, subscribeRealtime, loadAll]);
 
   // Ask for notification permission once the admin unlocks the dashboard
   useEffect(() => {
@@ -170,7 +230,7 @@ export default function App() {
     setTimeout(() => setSyncing(false), 400);
   };
 
-  const unlockAdmin = () => setAdminUnlocked(true);
+  const unlockAdmin = () => { setAdminUnlocked(true); tagAsAdmin(); };
 
   const lockAdmin = () => setAdminUnlocked(false);
 
@@ -200,6 +260,28 @@ export default function App() {
   const removeDelivery = async (id) => {
     const { error } = await supabase.from("deliveries").delete().eq("id", id).eq("status", "pending");
     if (error) alert("Could not remove: " + error.message);
+    else loadAll();
+  };
+
+
+  const hideDelivery = async (id) => {
+    const { error } = await supabase.from("deliveries").update({ hidden_until: today() }).eq("id", id);
+    if (error) alert("Could not hide: " + error.message);
+    else loadAll();
+  };
+
+  const postponeDelivery = async (id) => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().slice(0, 10);
+    const { error } = await supabase.from("deliveries").update({ hidden_until: tomorrowStr, delivery_date: tomorrowStr }).eq("id", id);
+    if (error) alert("Could not postpone: " + error.message);
+    else loadAll();
+  };
+
+  const unhideDelivery = async (id) => {
+    const { error } = await supabase.from("deliveries").update({ hidden_until: null, delivery_date: today() }).eq("id", id);
+    if (error) alert("Could not unhide: " + error.message);
     else loadAll();
   };
 
@@ -873,6 +955,9 @@ export default function App() {
                 helpers={helpers}
                 deliveries={deliveries}
                 driverLocations={driverLocations}
+                onHide={hideDelivery}
+                onPostpone={postponeDelivery}
+                onUnhide={unhideDelivery}
               />
             ) : adminTab === "map" ? (
               <AdminMap drivers={drivers} customers={customers} driverLocations={driverLocations} deliveries={deliveries} geocodeCustomer={geocodeCustomer} />
@@ -885,7 +970,7 @@ export default function App() {
             ) : adminTab === "calendar" ? (
               <AdminCalendar customers={customers} allDeliveries={allDeliveriesForStock} />
             ) : adminTab === "today" ? (
-              <AdminDayList drivers={drivers} customers={customers} helpers={helpers} deliveries={deliveries} />
+              <AdminDayList drivers={drivers} customers={customers} helpers={helpers} deliveries={deliveries} hiddenDeliveries={hiddenDeliveries} onHide={hideDelivery} onPostpone={postponeDelivery} onUnhide={unhideDelivery} />
             ) : adminTab === "missing" ? (
               <AdminMissingCrates
                 customers={customers}
