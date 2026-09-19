@@ -59,11 +59,6 @@ export default function DriverApp({
   const [payment, setPayment] = useState("");
   const [receiptPhoto, setReceiptPhoto] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 1000);
-    return () => clearInterval(id);
-  }, []);
   const [collectingDebtId, setCollectingDebtId] = useState(null);
   const [collectingDebtType, setCollectingDebtType] = useState(null); // "missing" | "empty"
   const [collectAmount, setCollectAmount] = useState("");
@@ -390,25 +385,19 @@ export default function DriverApp({
             </Btn>
           )}
 
-          {stop.status === "in_transit" && tick >= 0 && (() => {
-            const startedAt = stop.started_at ? new Date(stop.started_at) : null;
-            const minsElapsed = startedAt ? (Date.now() - startedAt.getTime()) / 60000 : 999;
-            const locked = minsElapsed < 4;
-            const secsLeft = locked ? Math.ceil((4 - minsElapsed) * 60) : 0;
-            return (
-              <Btn
-                full
-                disabled={busy || locked}
-                onClick={async () => {
-                  setBusy(true);
-                  await updateStatus(stop.id, "arrived", { driver_id: driverId, customer_id: stop.customer_id });
-                  setBusy(false);
-                }}
-              >
-                {busy ? "Updating…" : locked ? `Arrived at customer's location (wait ${secsLeft}s)` : "Arrived at customer's location"}
-              </Btn>
-            );
-          })()}
+          {stop.status === "in_transit" && (
+            <Btn
+              full
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                await updateStatus(stop.id, "arrived", { driver_id: driverId, customer_id: stop.customer_id });
+                setBusy(false);
+              }}
+            >
+              {busy ? "Updating…" : "Arrived at customer's location"}
+            </Btn>
+          )}
 
           {stop.status === "arrived" && (() => {
             const alreadyDelivered = stop.crates_delivered || 0;
@@ -474,7 +463,7 @@ export default function DriverApp({
                   <>
                     <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
                       <NumInput label="Returned Cracked" value={missingCrates} onChange={setMissingCrates} width={120} />
-                      <NumInput label="Crates owed to customer (short of eggs)" value={backorderCrates} onChange={setBackorderCrates} width={220} />
+                      <NumInput label="Owed to customer (short of eggs)" value={backorderCrates} onChange={setBackorderCrates} width={180} />
                     </div>
 
                     <div style={{ marginBottom: 16 }}>
@@ -623,11 +612,21 @@ export default function DriverApp({
           if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, owedDeliveryIds: [], backorder: 0, emptyLeft: 0, emptyLeftDate: null, emptyLeftDeliveryId: null };
           byCustomer[key].backorder += Number(d.backorder_crates);
         }
-        if (Number(d.empty_crates_left || 0) > 0) {
+        // Only flag empty_crates_left if:
+        //  1. It's > 0 (crates actually left behind)
+        //  2. It's from the last 30 days (avoids stale historical rows)
+        //  3. Not already resolved (picked_up >= left means it's been collected)
+        const emptyLeftVal = Number(d.empty_crates_left || 0);
+        const emptyPickedVal = Number(d.empty_crates_picked_up || 0);
+        const deliveryAge = d.delivery_date
+          ? (Date.now() - new Date(d.delivery_date).getTime()) / (1000 * 60 * 60 * 24)
+          : 999;
+        const alreadyResolved = emptyPickedVal >= emptyLeftVal;
+        if (emptyLeftVal > 0 && deliveryAge <= 30 && !alreadyResolved) {
           if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, owedDeliveryIds: [], backorder: 0, emptyLeft: 0, emptyLeftDate: null, emptyLeftDeliveryId: null };
           // keep only the most recent stop's snapshot for this customer
           if (!byCustomer[key].emptyLeftDate || d.delivery_date > byCustomer[key].emptyLeftDate) {
-            byCustomer[key].emptyLeft = Number(d.empty_crates_left);
+            byCustomer[key].emptyLeft = emptyLeftVal;
             byCustomer[key].emptyLeftDate = d.delivery_date;
             byCustomer[key].emptyLeftDeliveryId = d.id;
           }
@@ -903,12 +902,12 @@ export default function DriverApp({
 
         const s = stockForm[type];
         const setField = (field, value) => setStockForm((prev) => ({ ...prev, [type]: { ...prev[type], [field]: value } }));
-        const filled = s.small !== "" && s.medium !== "" && s.large !== "" && s.photo;
+        const filled = s.small !== "" && s.medium !== "" && s.large !== "" && s.photo && s.video;
 
         return (
           <div key={type} style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 14 }}>
             <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>Report {label} warehouse count</div>
-            <div style={{ fontSize: 12, color: T.mute, marginBottom: 10 }}>{question} A photo and video are both required as proof.</div>
+            <div style={{ fontSize: 12, color: T.mute, marginBottom: 10 }}>{question} A photo is required as proof.</div>
             <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
               <NumInput label="Small" value={s.small} onChange={(v) => setField("small", v)} width={90} />
               <NumInput label="Medium" value={s.medium} onChange={(v) => setField("medium", v)} width={90} />
@@ -924,7 +923,7 @@ export default function DriverApp({
                 onRemoveVideo={() => setField("video", null)}
                 upload={uploadPhoto}
                 maxPhotos={1}
-                label="Photo and video proof (both required)"
+                label="Photo proof (required)"
               />
             </div>
             <Btn
