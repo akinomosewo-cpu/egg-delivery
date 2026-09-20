@@ -1,7 +1,49 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { T, Btn, Tag, NumInput, MediaCapture, SignaturePad, fmtQty } from "./ui";
 import { uploadPhoto } from "../supabase";
 import { tagAsDriver } from "../notifications";
+
+
+// Offline data cache
+// Writes drivers/customers/helpers/deliveries to IndexedDB on every
+// successful server fetch. Reads them back when the app loads offline.
+const CACHE_DB    = "egg-app-cache";
+const CACHE_STORE = "snapshots";
+
+function openCacheDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(CACHE_DB, 1);
+    req.onupgradeneeded = () => {
+      req.result.createObjectStore(CACHE_STORE, { keyPath: "key" });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+async function saveCache(key, value) {
+  try {
+    const db = await openCacheDB();
+    await new Promise((res, rej) => {
+      const tx = db.transaction(CACHE_STORE, "readwrite");
+      tx.objectStore(CACHE_STORE).put({ key, value, savedAt: Date.now() });
+      tx.oncomplete = res;
+      tx.onerror    = () => rej(tx.error);
+    });
+  } catch (e) { console.warn("[cache] save failed:", e); }
+}
+
+async function loadCache(key) {
+  try {
+    const db = await openCacheDB();
+    return await new Promise((res, rej) => {
+      const tx  = db.transaction(CACHE_STORE, "readonly");
+      const req = tx.objectStore(CACHE_STORE).get(key);
+      req.onsuccess = () => res(req.result ? req.result.value : null);
+      req.onerror   = () => rej(req.error);
+    });
+  } catch { return null; }
+}
 
 const sizesLine = (d) => {
   const parts = [
@@ -61,6 +103,55 @@ export default function DriverApp({
   const [busy, setBusy] = useState(false);
   const [offlineToast, setOfflineToast] = useState(null);
 
+  // Local copies seeded from cache when offline.
+  // When props are non-empty (online), use them directly.
+  // When props are empty (offline), fall back to cached copies.
+  const [cachedDrivers,   setCachedDrivers]   = useState([]);
+  const [cachedCustomers, setCachedCustomers] = useState([]);
+  const [cachedHelpers,   setCachedHelpers]   = useState([]);
+  const [cachedDeliveries,  setCachedDeliveries]  = useState([]);
+  const [cachedOpenDebts,   setCachedOpenDebts]   = useState([]);
+  const [cachedAllDeliveries, setCachedAllDeliveries] = useState([]);
+
+  // On mount: load from IndexedDB so names show up immediately offline
+  useEffect(() => {
+    (async () => {
+      const [d, c, h, del, od, all] = await Promise.all([
+        loadCache("drivers"),
+        loadCache("customers"),
+        loadCache("helpers"),
+        loadCache("deliveries"),
+        loadCache("openDebts"),
+        loadCache("allDeliveries"),
+      ]);
+      if (d)   setCachedDrivers(d);
+      if (c)   setCachedCustomers(c);
+      if (h)   setCachedHelpers(h);
+      if (del) setCachedDeliveries(del);
+      if (od)  setCachedOpenDebts(od);
+      if (all) setCachedAllDeliveries(all);
+    })();
+  }, []);
+
+  // Whenever fresh data arrives from server, persist it to cache
+  useEffect(() => {
+    if (drivers   && drivers.length   > 0) saveCache("drivers",        drivers);
+    if (customers && customers.length > 0) saveCache("customers",      customers);
+    if (helpers   && helpers.length   > 0) saveCache("helpers",        helpers);
+    if (deliveries  && deliveries.length  > 0) saveCache("deliveries",      deliveries);
+    if (openDebts   && openDebts.length   > 0) saveCache("openDebts",       openDebts);
+    if (allDeliveries && allDeliveries.length > 0) saveCache("allDeliveries",   allDeliveries);
+  }, [drivers, customers, helpers, deliveries, openDebts, allDeliveries]);
+
+  // Active data: prefer live props, fall back to cache
+  const _drivers       = (drivers       && drivers.length       > 0) ? drivers       : cachedDrivers;
+  const _customers     = (customers     && customers.length     > 0) ? customers     : cachedCustomers;
+  const _helpers       = (helpers       && helpers.length       > 0) ? helpers       : cachedHelpers;
+  const _deliveries    = (deliveries    && deliveries.length    > 0) ? deliveries    : cachedDeliveries;
+  const _openDebts     = (openDebts     && _openDebts.length     > 0) ? openDebts     : cachedOpenDebts;
+  const _allDeliveries = (allDeliveries && allDeliveries.length > 0) ? allDeliveries : cachedAllDeliveries;
+
+
   const showOfflineToast = useCallback((msg) => {
     setOfflineToast(msg);
     setTimeout(() => setOfflineToast(null), 5000);
@@ -94,7 +185,7 @@ export default function DriverApp({
   // from an empty-crates-left debt, since both key off a delivery id and
   // could otherwise collide in the collectingDebtId/collectingDebtType state.
   const renderDebtCard = (debt, busyState, setBusyState, kind = "missing") => {
-    const c = customers.find((x) => x.id === debt.customer_id);
+    const c = _customers.find((x) => x.id === debt.customer_id);
     const isCollecting = collectingDebtId === debt.id && collectingDebtType === kind;
     const owed = kind === "missing" ? debt.missing_crates : debt.empty_crates_left;
     const collectFn = kind === "missing" ? collectMissingCrates : collectEmptyCrates;
@@ -237,7 +328,7 @@ export default function DriverApp({
         <div style={{ textAlign: "center", fontWeight: 800, fontSize: 18, marginBottom: 8 }}>
           Who is driving today?
         </div>
-        {drivers.map((d) => (
+        {_drivers.map((d) => (
           <button
             key={d.id}
             onClick={() => {
@@ -263,7 +354,7 @@ export default function DriverApp({
     );
   }
 
-  const drv = drivers.find((d) => d.id === driverId);
+  const drv = _drivers.find((d) => d.id === driverId);
   // Helpers already riding with another driver on an unfinished delivery — hide them
   // from the picker so two drivers can't claim the same helper at once.
   const busyHelperIds = new Set(
@@ -271,9 +362,9 @@ export default function DriverApp({
       .filter((d) => d.driver_id && d.driver_id !== driverId && d.status !== "delivered")
       .flatMap((d) => d.helper_ids || [])
   );
-  const pickableHelpers = helpers.filter((h) => !busyHelperIds.has(h.id));
-  const available = deliveries.filter((d) => !d.driver_id && d.status === "pending");
-  const myStops = deliveries.filter((d) => d.driver_id === driverId);
+  const pickableHelpers = _helpers.filter((h) => !busyHelperIds.has(h.id));
+  const available = _deliveries.filter((d) => !d.driver_id && d.status === "pending");
+  const myStops = _deliveries.filter((d) => d.driver_id === driverId);
   const pending = myStops.filter((d) => d.status !== "delivered");
   const done = myStops.filter((d) => d.status === "delivered");
   const stop = myStops.find((d) => d.id === openStop);
@@ -289,7 +380,7 @@ export default function DriverApp({
 
   // ---- Claiming a delivery: pick 0-2 helpers, then confirm ----
   if (claiming) {
-    const c = customers.find((x) => x.id === claiming.customer_id);
+    const c = _customers.find((x) => x.id === claiming.customer_id);
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <Btn kind="ghost" small onClick={() => { setClaimingId(null); setPickedHelpers([]); }}>
@@ -347,15 +438,33 @@ export default function DriverApp({
             disabled={busy}
             onClick={async () => {
               setBusy(true);
-              const ok = await claimDelivery(claiming.id, driverId, pickedHelpers);
-              setBusy(false);
-              if (ok) {
-                setClaimingId(null);
-                setPickedHelpers([]);
-              } else {
-                alert("Someone else just claimed this delivery. Pick another one.");
-                setClaimingId(null);
-                setPickedHelpers([]);
+              try {
+                const result = await withOfflineQueue("claimDelivery", claimDelivery)(claiming.id, driverId, pickedHelpers);
+                if (result === "__queued__") {
+                  // Offline: optimistically mark the delivery as claimed locally
+                  // so it moves from "Available" into "My route" right away.
+                  // The real DB update syncs when signal returns.
+                  const patch = (list) => list.map((d) =>
+                    d.id === claiming.id
+                      ? { ...d, driver_id: driverId, helper_ids: pickedHelpers, status: "pending" }
+                      : d
+                  );
+                  setCachedDeliveries((prev) => patch(prev));
+                  saveCache("deliveries", patch(cachedDeliveries.length ? cachedDeliveries : _deliveries));
+                  setClaimingId(null);
+                  setPickedHelpers([]);
+                } else if (result) {
+                  setClaimingId(null);
+                  setPickedHelpers([]);
+                } else {
+                  alert("Someone else just claimed this delivery. Pick another one.");
+                  setClaimingId(null);
+                  setPickedHelpers([]);
+                }
+              } catch {
+                alert("Could not claim — please try again.");
+              } finally {
+                setBusy(false);
               }
             }}
           >
@@ -368,9 +477,9 @@ export default function DriverApp({
 
   // ---- Stop detail (claimed by me) ----
   if (stop) {
-    const c = customers.find((x) => x.id === stop.customer_id);
+    const c = _customers.find((x) => x.id === stop.customer_id);
     const name = c ? c.name : "this customer";
-    const stopHelperNames = (stop.helper_ids || []).map((id) => (helpers.find((h) => h.id === id) || {}).name).filter(Boolean);
+    const stopHelperNames = (stop.helper_ids || []).map((id) => (_helpers.find((h) => h.id === id) || {}).name).filter(Boolean);
 
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -640,7 +749,7 @@ export default function DriverApp({
   // ---- Main screen: available pool + my claimed route ----
   const crateIssues = (() => {
     const byCustomer = {};
-    openDebts
+    _openDebts
       .forEach((d) => {
         const key = d.customer_id;
         if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, owedDeliveryIds: [], backorder: 0, emptyLeft: 0, emptyLeftDate: null, emptyLeftDeliveryId: null };
@@ -654,18 +763,24 @@ export default function DriverApp({
           if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, owedDeliveryIds: [], backorder: 0, emptyLeft: 0, emptyLeftDate: null, emptyLeftDeliveryId: null };
           byCustomer[key].backorder += Number(d.backorder_crates);
         }
-        if (Number(d.empty_crates_left || 0) > 0) {
+        // Only flag empty crates if: value > 0, delivery is within 30 days,
+        // and not already resolved (picked_up >= left means collected)
+        const _emptyLeft = Number(d.empty_crates_left || 0);
+        const _emptyPicked = Number(d.empty_crates_picked_up || 0);
+        const _agedays = d.delivery_date
+          ? (Date.now() - new Date(d.delivery_date).getTime()) / 86400000
+          : 999;
+        if (_emptyLeft > 0 && _agedays <= 30 && _emptyPicked < _emptyLeft) {
           if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, owedDeliveryIds: [], backorder: 0, emptyLeft: 0, emptyLeftDate: null, emptyLeftDeliveryId: null };
-          // keep only the most recent stop's snapshot for this customer
           if (!byCustomer[key].emptyLeftDate || d.delivery_date > byCustomer[key].emptyLeftDate) {
-            byCustomer[key].emptyLeft = Number(d.empty_crates_left);
+            byCustomer[key].emptyLeft = _emptyLeft;
             byCustomer[key].emptyLeftDate = d.delivery_date;
             byCustomer[key].emptyLeftDeliveryId = d.id;
           }
         }
       });
     return Object.values(byCustomer)
-      .map((c) => ({ ...c, name: (customers.find((x) => x.id === c.customerId) || {}).name || "a customer" }))
+      .map((c) => ({ ...c, name: (_customers.find((x) => x.id === c.customerId) || {}).name || "a customer" }))
       .filter((c) => c.owed > 0 || c.backorder > 0 || c.emptyLeft > 0);
   })();
 
@@ -699,7 +814,7 @@ export default function DriverApp({
               </div>
               {c.owed > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: c.emptyLeft > 0 ? 8 : 0 }}>
-                  {openDebts
+                  {_openDebts
                     .filter((debt) => c.owedDeliveryIds.includes(debt.id))
                     .map((debt) => renderDebtCard(debt, busy, setBusy, "missing"))}
                 </div>
@@ -723,7 +838,7 @@ export default function DriverApp({
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {available.map((d) => {
-            const c = customers.find((x) => x.id === d.customer_id);
+            const c = _customers.find((x) => x.id === d.customer_id);
             return (
               <button
                 key={d.id}
@@ -770,10 +885,10 @@ export default function DriverApp({
 
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {myStops.map((d) => {
-            const c = customers.find((x) => x.id === d.customer_id);
+            const c = _customers.find((x) => x.id === d.customer_id);
             const isDone = d.status === "delivered";
             const canReturn = d.status === "pending" && (d.crates_delivered || 0) === 0;
-            const helperNames = (d.helper_ids || []).map((id) => (helpers.find((h) => h.id === id) || {}).name).filter(Boolean);
+            const helperNames = (d.helper_ids || []).map((id) => (_helpers.find((h) => h.id === id) || {}).name).filter(Boolean);
             return (
               <div
                 key={d.id}
@@ -826,7 +941,16 @@ export default function DriverApp({
                     onClick={(e) => {
                       e.stopPropagation();
                       if (window.confirm(`Return this delivery to ${c ? c.name : "the customer"} back to the pool? Any other driver can claim it.`)) {
-                        unclaimDelivery(d.id, driverId);
+                        // Try live; if offline, queue and patch local cache
+                        withOfflineQueue("unclaimDelivery", unclaimDelivery)(d.id, driverId).then((res) => {
+                          if (res === "__queued__") {
+                            const unpatch = (list) => list.map((x) =>
+                              x.id === d.id ? { ...x, driver_id: null, helper_ids: [], status: "pending" } : x
+                            );
+                            setCachedDeliveries((prev) => unpatch(prev));
+                            saveCache("deliveries", unpatch(_deliveries));
+                          }
+                        }).catch(() => {});
                       }
                     }}
                     style={{
@@ -881,7 +1005,7 @@ export default function DriverApp({
 
       {/* Missing crates owed by customers — company-wide, any driver can collect */}
       {(() => {
-        const allDebts = openDebts;
+        const allDebts = _openDebts;
         if (allDebts.length === 0) return null;
         return (
           <div>
@@ -907,7 +1031,7 @@ export default function DriverApp({
             : "How many are left in the warehouse now that the shift is ending?";
 
         if (todayCount) {
-          const who = (drivers.find((d) => d.id === todayCount.driver_id) || {}).name || "A driver";
+          const who = (_drivers.find((d) => d.id === todayCount.driver_id) || {}).name || "A driver";
           return (
             <div key={type} style={{ background: T.tan, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 14, opacity: 0.75 }}>
               <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4, color: T.mute }}>
@@ -947,7 +1071,7 @@ export default function DriverApp({
         return (
           <div key={type} style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 14 }}>
             <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>Report {label} warehouse count</div>
-            <div style={{ fontSize: 12, color: T.mute, marginBottom: 10 }}>{question} A photo and video are both required as proof.</div>
+            <div style={{ fontSize: 12, color: T.mute, marginBottom: 10 }}>{question} A photo is required as proof.</div>
             <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
               <NumInput label="Small" value={s.small} onChange={(v) => setField("small", v)} width={90} />
               <NumInput label="Medium" value={s.medium} onChange={(v) => setField("medium", v)} width={90} />
@@ -963,7 +1087,7 @@ export default function DriverApp({
                 onRemoveVideo={() => setField("video", null)}
                 upload={uploadPhoto}
                 maxPhotos={1}
-                label="Photo and video proof (both required)"
+                label="Photo proof (required)"
               />
             </div>
             <Btn
