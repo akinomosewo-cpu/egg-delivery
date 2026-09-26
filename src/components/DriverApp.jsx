@@ -690,6 +690,11 @@ export default function DriverApp({
                       }
                     } catch (e) {
                       console.warn("Submit failed:", e.message);
+                      // Even if save failed (offline), optimistically mark as delivered
+                      // so driver can move to the next stop. Queue replays on reconnect.
+                      if (isFinalVisit) {
+                        setOptimisticStatus((s) => ({ ...s, [stop.id]: "delivered" }));
+                      }
                     } finally {
                       setBusy(false);
                       setOpenStop(null);
