@@ -26,24 +26,22 @@ export async function uploadPhoto(file) {
     );
   }
 
-  // Try the real upload first
-  if (navigator.onLine) {
-    try {
-      const ext = file.name.split(".").pop() || (isVideo ? "mp4" : "jpg");
-      const path = `${today()}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-      const uploadPromise = supabase.storage.from("delivery-photos").upload(path, file);
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("timeout")), 20000)
-      );
-      const { error } = await Promise.race([uploadPromise, timeoutPromise]);
-      if (!error) {
-        const { data } = supabase.storage.from("delivery-photos").getPublicUrl(path);
-        return data.publicUrl;
-      }
-    } catch (e) {
-      // fall through to offline save below
-      console.warn("Upload failed, saving offline:", e.message);
+  // Try the real upload first — short 8s timeout so a bad SIM connection
+  // fails fast instead of blocking the driver for 20 seconds
+  try {
+    const ext = file.name.split(".").pop() || (isVideo ? "mp4" : "jpg");
+    const path = `${today()}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const uploadPromise = supabase.storage.from("delivery-photos").upload(path, file);
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("timeout")), 8000)
+    );
+    const { error } = await Promise.race([uploadPromise, timeoutPromise]);
+    if (!error) {
+      const { data } = supabase.storage.from("delivery-photos").getPublicUrl(path);
+      return data.publicUrl;
     }
+  } catch (e) {
+    console.warn("Upload failed, saving to device:", e.message);
   }
 
   // No signal or upload failed — save locally and return a pending:// URL

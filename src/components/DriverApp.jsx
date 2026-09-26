@@ -227,16 +227,25 @@ export default function DriverApp({
     return () => window.removeEventListener("online", replay);
   }, [updateStatus, claimDelivery]);
 
-  // Clear optimistic overrides once the real data from Supabase catches up
+  // Clear optimistic overrides only when real data has caught up to or
+  // passed the optimistic status — never revert to a lower status
+  const STATUS_ORDER = { pending: 0, in_transit: 1, arrived: 2, delivered: 3 };
   useEffect(() => {
     setOptimisticStatus((current) => {
       const updated = { ...current };
       let changed = false;
       for (const id of Object.keys(updated)) {
         const real = deliveries.find((d) => d.id === id);
-        if (real && real.status === updated[id]) {
-          delete updated[id];
-          changed = true;
+        if (real) {
+          const realRank = STATUS_ORDER[real.status] ?? 0;
+          const optimisticRank = STATUS_ORDER[updated[id]] ?? 0;
+          if (realRank >= optimisticRank) {
+            delete updated[id];
+            changed = true;
+          }
+          // If real is LOWER than optimistic (e.g. Supabase still shows
+          // "arrived" but driver marked it "delivered" offline), keep the
+          // optimistic override so the screen doesn't revert
         }
       }
       return changed ? updated : current;
@@ -555,6 +564,11 @@ export default function DriverApp({
                     maxPhotos={5}
                     label="Photos at this stop (at least 1 required)"
                   />
+                  {stopPhotos.some((u) => u && u.startsWith("pending://")) && (
+                    <div style={{ fontSize: 12, color: "#b07800", fontWeight: 600, marginTop: 6 }}>
+                      📲 Saved to device — will upload automatically when signal returns
+                    </div>
+                  )}
                 </div>
 
                 {!isFinalVisit && thisVisit > 0 && (
@@ -587,6 +601,11 @@ export default function DriverApp({
                           maxPhotos={5}
                           label="Receipt photos (1 required, up to 5)"
                         />
+                        {receiptPhotos.some((u) => u && u.startsWith("pending://")) && (
+                          <div style={{ fontSize: 12, color: "#b07800", fontWeight: 600, marginTop: 6 }}>
+                            📲 Saved to device — will upload automatically when signal returns
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -603,8 +622,14 @@ export default function DriverApp({
                           </button>
                         </div>
                       ) : signatureUrl ? (
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                          <img src={signatureUrl} alt="customer signature" style={{ width: 110, height: 46, objectFit: "contain", background: "#fff", border: `1.5px solid ${T.line}`, borderRadius: 6 }} />
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                          {signatureUrl.startsWith("pending://") ? (
+                            <div style={{ fontSize: 12, color: "#b07800", fontWeight: 600 }}>
+                              ✍️ Signature saved to device — will upload when signal returns
+                            </div>
+                          ) : (
+                            <img src={signatureUrl} alt="customer signature" style={{ width: 110, height: 46, objectFit: "contain", background: "#fff", border: `1.5px solid ${T.line}`, borderRadius: 6 }} />
+                          )}
                           <Btn kind="ghost" small onClick={() => setSignatureUrl(null)}>
                             Redo
                           </Btn>

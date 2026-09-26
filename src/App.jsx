@@ -173,6 +173,7 @@ export default function App() {
         } else if (item.actionName === "markDelivered") {
           const args = [...item.args];
           args[2] = swapUrls(args[2]); // photoUrls
+          if (isPendingUrl(args[6]) && urlSwap[args[6]]) args[6] = urlSwap[args[6]]; // signatureUrl
           if (isPendingUrl(args[9]) && urlSwap[args[9]]) args[9] = urlSwap[args[9]]; // receiptUrl
           await markDelivered(...args);
         }
