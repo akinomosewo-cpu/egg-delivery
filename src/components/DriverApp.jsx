@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { T, Btn, Tag, NumInput, MediaCapture, SignaturePad, fmtQty } from "./ui";
 import { uploadPhoto } from "../supabase";
 import { tagAsDriver } from "../notifications";
+import { queueAction, getQueuedActions, removeQueuedAction, looksOffline } from "../offlineQueue";
 
 const sizesLine = (d) => {
   const parts = [
@@ -59,6 +60,29 @@ export default function DriverApp({
   const [payment, setPayment] = useState("");
   const [receiptPhotos, setReceiptPhotos] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [offlineToast, setOfflineToast] = useState(null);
+
+  const showOfflineToast = useCallback((msg) => {
+    setOfflineToast(msg);
+    setTimeout(() => setOfflineToast(null), 6000);
+  }, []);
+
+  const withOfflineQueue = useCallback(
+    (actionName, fn) =>
+      async (...args) => {
+        try {
+          return await fn(...args);
+        } catch (err) {
+          if (looksOffline(err)) {
+            await queueAction(actionName, args);
+            showOfflineToast("📡 No signal — action saved and will sync automatically when you're back online.");
+            return "__queued__";
+          }
+          throw err;
+        }
+      },
+    [showOfflineToast]
+  );
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 1000);
@@ -168,6 +192,24 @@ export default function DriverApp({
   useEffect(() => {
     updateDriverLocationRef.current = updateDriverLocation;
   }, [updateDriverLocation]);
+
+  // Replay queued status actions when signal returns
+  useEffect(() => {
+    const replay = async () => {
+      let actions;
+      try { actions = await getQueuedActions(); } catch { return; }
+      for (const item of actions) {
+        try {
+          if (item.actionName === "updateStatus") await updateStatus(...item.args);
+          else if (item.actionName === "claimDelivery") await claimDelivery(...item.args);
+          await removeQueuedAction(item.id);
+        } catch { /* leave for next attempt */ }
+      }
+    };
+    if (navigator.onLine) replay();
+    window.addEventListener("online", replay);
+    return () => window.removeEventListener("online", replay);
+  }, [updateStatus, claimDelivery]);
 
   // Quietly report this driver's live position while they're logged in —
   // only works while this screen is open and the phone is unlocked.
@@ -382,8 +424,9 @@ export default function DriverApp({
               disabled={busy}
               onClick={async () => {
                 setBusy(true);
-                await updateStatus(stop.id, "in_transit", { driver_id: driverId, customer_id: stop.customer_id });
-                setBusy(false);
+                try {
+                  await withOfflineQueue("updateStatus", updateStatus)(stop.id, "in_transit", { driver_id: driverId, customer_id: stop.customer_id });
+                } catch {} finally { setBusy(false); }
               }}
             >
               {busy ? "Starting…" : `Start route to ${name}`}
@@ -393,16 +436,17 @@ export default function DriverApp({
           {stop.status === "in_transit" && tick >= 0 && (() => {
             const startedAt = stop.started_at ? new Date(stop.started_at) : null;
             const minsElapsed = startedAt ? (Date.now() - startedAt.getTime()) / 60000 : 999;
-            const locked = minsElapsed < 4;
-            const secsLeft = locked ? Math.ceil((4 - minsElapsed) * 60) : 0;
+            const locked = minsElapsed < 2;
+            const secsLeft = locked ? Math.ceil((2 - minsElapsed) * 60) : 0;
             return (
               <Btn
                 full
                 disabled={busy || locked}
                 onClick={async () => {
                   setBusy(true);
-                  await updateStatus(stop.id, "arrived", { driver_id: driverId, customer_id: stop.customer_id });
-                  setBusy(false);
+                  try {
+                    await withOfflineQueue("updateStatus", updateStatus)(stop.id, "arrived", { driver_id: driverId, customer_id: stop.customer_id });
+                  } catch {} finally { setBusy(false); }
                 }}
               >
                 {busy ? "Updating…" : locked ? `Arrived at customer's location (wait ${secsLeft}s)` : "Arrived at customer's location"}
@@ -640,6 +684,14 @@ export default function DriverApp({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {offlineToast && (
+        <div style={{
+          background: "#1a2a0a", color: "#c8f080", fontSize: 13, fontWeight: 600,
+          padding: "10px 14px", borderRadius: 10,
+        }}>
+          {offlineToast}
+        </div>
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ fontWeight: 800, fontSize: 17 }}>{drv ? drv.name : ""}</div>
         <Btn kind="ghost" small onClick={() => setDriverId(null)}>
