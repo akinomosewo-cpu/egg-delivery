@@ -1,7 +1,6 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { supabase, today, logEvent, requestNotificationPermission, notify } from "./supabase";
 import { queueAction, getQueuedActions, removeQueuedAction, queueCount, looksOffline } from "./offlineQueue";
-import { initNotifications, tagAsAdmin } from "./notifications";
 import { T } from "./components/ui";
 import AdminPlan from "./components/AdminPlan";
 import AdminDashboard from "./components/AdminDashboard";
@@ -15,9 +14,10 @@ import ActivityLogTable from "./components/ActivityLogTable";
 import AdminBalances from "./components/AdminBalances";
 import AdminCalendar from "./components/AdminCalendar";
 import AdminWarehouseAttendance from "./components/AdminWarehouseAttendance";
+import AdminReceipts from "./components/AdminReceipts";
 import DriverApp from "./components/DriverApp";
 
-const ADMIN_PIN = "8791"; // change this to change the admin password
+const ADMIN_PIN = "1003"; // change this to change the admin password
 
 export default function App() {
   const [device, setDevice] = useState("driver"); // driver-first: workers open this most
@@ -44,9 +44,6 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [pendingSync, setPendingSync] = useState(0);
   const [error, setError] = useState(null);
-
-  // Initialise native push notifications once on mount — safe no-op on web
-  useEffect(() => { initNotifications(); }, []);
 
   // ---- Load everything for today ----
   const loadAll = useCallback(async () => {
@@ -82,21 +79,19 @@ export default function App() {
       setStockCounts(counts.data);
       setCustomerPayments(payments.data);
       setError(null);
+      setIsOnline(true); // a successful fetch is proof of connectivity — more reliable than WebView's online/offline events
     } catch (e) {
       console.error(e);
-      setError(e.message || "Could not load data");
+      if (looksOffline(e)) setIsOnline(false);
+      else setError(e.message || "Could not load data");
     } finally {
       setLoading(false);
     }
   }, []);
 
   // ---- Realtime: any change re-syncs everyone, and pings the admin on new deliveries ----
-  const channelRef = useRef(null);
-
-  const subscribeRealtime = useCallback(() => {
-    if (channelRef.current) {
-      supabase.removeChannel(channelRef.current);
-    }
+  useEffect(() => {
+    loadAll();
     const channel = supabase
       .channel("live-updates")
       .on("postgres_changes", { event: "*", schema: "public", table: "deliveries" }, loadAll)
@@ -112,16 +107,8 @@ export default function App() {
         if (row.event_type === "crates_submitted") notify("Crates submitted", "A driver sent in their crate count.");
       })
       .subscribe();
-    channelRef.current = channel;
+    return () => supabase.removeChannel(channel);
   }, [loadAll]);
-
-  useEffect(() => {
-    loadAll();
-    subscribeRealtime();
-    return () => {
-      if (channelRef.current) supabase.removeChannel(channelRef.current);
-    };
-  }, [loadAll, subscribeRealtime]);
 
   // Backup for realtime: silently re-fetch every 5 seconds in case a realtime
   // event gets missed (weak signal, brief disconnect, etc). No spinner, no
@@ -137,45 +124,6 @@ export default function App() {
   // and check periodically too (some browsers don't fire 'online' reliably)
   const processQueue = useCallback(async () => {
     if (!navigator.onLine) return;
-
-    // Step 1: upload any locally-saved photos first, swap pending:// URLs
-    // with real ones before processing the actions that reference them.
-    try {
-      const { getPendingPhotos, removePendingPhoto, isPendingUrl } = await import("./offlineQueue");
-      const pending = await getPendingPhotos();
-      for (const p of pending) {
-        try {
-          const file = new File([p.buffer], p.name, { type: p.type });
-          const ext = p.name.split(".").pop() || "jpg";
-          const path = `${today()}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-          const { error } = await supabase.storage.from("delivery-photos").upload(path, file);
-          if (!error) {
-            const { data } = supabase.storage.from("delivery-photos").getPublicUrl(path);
-            // Replace pending:// reference with real URL in every queued action
-            const { getQueuedActions: getAll } = await import("./offlineQueue");
-            const actions = await getAll();
-            for (const action of actions) {
-              const updated = JSON.parse(JSON.stringify(action.args, (k, v) =>
-                typeof v === "string" && v === p.id ? data.publicUrl : v
-              ));
-              if (JSON.stringify(updated) !== JSON.stringify(action.args)) {
-                const { queueAction: requeue, removeQueuedAction: rmAction } = await import("./offlineQueue");
-                await rmAction(action.id);
-                await requeue(action.actionName, updated);
-              }
-            }
-            await removePendingPhoto(p.id);
-          }
-        } catch (e) {
-          console.warn("Pending photo upload failed, will retry:", e.message);
-          break; // wait for next cycle
-        }
-      }
-    } catch (e) {
-      console.warn("processQueue photo step failed:", e.message);
-    }
-
-    // Step 2: process queued actions as before
     let items;
     try {
       items = await getQueuedActions();
@@ -190,8 +138,8 @@ export default function App() {
         }
         await removeQueuedAction(item.id);
       } catch (e) {
-        if (!looksOffline(e)) await removeQueuedAction(item.id);
-        break;
+        if (!looksOffline(e)) await removeQueuedAction(item.id); // a real error, not just offline — drop it, don't retry forever
+        break; // stop here, try the rest next time
       }
     }
     const remaining = await queueCount();
@@ -203,8 +151,6 @@ export default function App() {
     const goOnline = () => {
       setIsOnline(true);
       processQueue();
-      subscribeRealtime(); // reconnect the websocket — it may have dropped while offline
-      loadAll(); // immediately re-fetch so no stale data shows
     };
     const goOffline = () => setIsOnline(false);
     window.addEventListener("online", goOnline);
@@ -217,7 +163,7 @@ export default function App() {
       window.removeEventListener("offline", goOffline);
       clearInterval(interval);
     };
-  }, [processQueue, subscribeRealtime, loadAll]);
+  }, [processQueue]);
 
   // Ask for notification permission once the admin unlocks the dashboard
   useEffect(() => {
@@ -230,7 +176,7 @@ export default function App() {
     setTimeout(() => setSyncing(false), 400);
   };
 
-  const unlockAdmin = () => { setAdminUnlocked(true); tagAsAdmin(); };
+  const unlockAdmin = () => setAdminUnlocked(true);
 
   const lockAdmin = () => setAdminUnlocked(false);
 
@@ -835,6 +781,7 @@ export default function App() {
                   { key: "balances", label: "Balances" },
                   { key: "calendar", label: "Calendar" },
                   { key: "missing", label: "Missing" },
+                  { key: "receipts", label: "Receipts" },
                   { key: "reports", label: "Reports" },
                   { key: "manage", label: "Manage" },
                   { key: "attendance", label: "Warehouse Attendance" },
@@ -980,6 +927,8 @@ export default function App() {
                 allDeliveries={allDeliveriesForStock}
                 collectEmptyCrates={collectEmptyCrates}
               />
+            ) : adminTab === "receipts" ? (
+              <AdminReceipts deliveries={deliveries} allDeliveries={allDeliveriesForStock} customers={customers} drivers={drivers} />
             ) : adminTab === "reports" ? (
               <AdminReports drivers={drivers} customers={customers} helpers={helpers} />
             ) : adminTab === "attendance" ? (

@@ -122,8 +122,23 @@ export default function AdminManage({ drivers, customers, helpers, addDriver, de
 
       {/* Helpers */}
       <div style={section}>
-        <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 12 }}>
-          Helpers <span style={{ color: T.mute, fontWeight: 600, fontSize: 12 }}>({helpers.length})</span>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div style={{ fontWeight: 800, fontSize: 15 }}>
+            Helpers <span style={{ color: T.mute, fontWeight: 600, fontSize: 12 }}>({helpers.length})</span>
+          </div>
+          {helpers.length > 0 && (
+            <Btn
+              kind="danger"
+              small
+              onClick={() => {
+                if (window.confirm(`Remove all ${helpers.length} helper${helpers.length !== 1 ? "s" : ""}? This will clear the list completely.`)) {
+                  helpers.forEach((h) => deactivateHelper(h.id));
+                }
+              }}
+            >
+              Clear all
+            </Btn>
+          )}
         </div>
         <div style={{ fontSize: 12, color: T.mute, marginBottom: 10 }}>
           People drivers can bring along — they'll show up as options when a driver claims a delivery.
