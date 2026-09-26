@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase, today, logEvent, requestNotificationPermission, notify } from "./supabase";
-import { queueAction, getQueuedActions, removeQueuedAction, queueCount, looksOffline } from "./offlineQueue";
+import { queueAction, getQueuedActions, removeQueuedAction, queueCount, looksOffline, getPendingPhotos, removePendingPhoto, isPendingUrl } from "./offlineQueue";
 import { T } from "./components/ui";
 import AdminPlan from "./components/AdminPlan";
 import AdminDashboard from "./components/AdminDashboard";
@@ -122,6 +122,38 @@ export default function App() {
   // and check periodically too (some browsers don't fire 'online' reliably)
   const processQueue = useCallback(async () => {
     if (!navigator.onLine) return;
+
+    // Step 1: upload any locally-saved photos, build a URL swap map
+    const urlSwap = {};
+    try {
+      const pending = await getPendingPhotos();
+      for (const p of pending) {
+        try {
+          const file = new File([p.buffer], p.name, { type: p.type });
+          const ext = p.name.split(".").pop() || "jpg";
+          const path = `${today()}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+          const { error } = await supabase.storage.from("delivery-photos").upload(path, file);
+          if (!error) {
+            const { data } = supabase.storage.from("delivery-photos").getPublicUrl(path);
+            urlSwap[p.id] = data.publicUrl;
+            await removePendingPhoto(p.id);
+          }
+        } catch (e) {
+          console.warn("Pending photo upload failed:", e.message);
+          break; // wait for next cycle if network drops again
+        }
+      }
+    } catch (e) {
+      console.warn("Photo queue check failed:", e.message);
+    }
+
+    // Swap pending:// URLs in any array of URLs
+    const swapUrls = (urls) => {
+      if (!Array.isArray(urls)) return urls;
+      return urls.map((u) => (isPendingUrl(u) && urlSwap[u] ? urlSwap[u] : u));
+    };
+
+    // Step 2: replay queued actions with real URLs substituted in
     let items;
     try {
       items = await getQueuedActions();
@@ -136,10 +168,13 @@ export default function App() {
         } else if (item.actionName === "claimDelivery") {
           await claimDelivery(...item.args);
         } else if (item.actionName === "submitPartialDelivery") {
-          const [id, addedCrates, newPhotos, crateExchange, ctx] = item.args;
-          await submitPartialDelivery(id, addedCrates, newPhotos, crateExchange, ctx);
+          const [id, addedCrates, photos, crateExchange, ctx] = item.args;
+          await submitPartialDelivery(id, addedCrates, swapUrls(photos), crateExchange, ctx);
         } else if (item.actionName === "markDelivered") {
-          await markDelivered(...item.args);
+          const args = [...item.args];
+          args[2] = swapUrls(args[2]); // photoUrls
+          if (isPendingUrl(args[9]) && urlSwap[args[9]]) args[9] = urlSwap[args[9]]; // receiptUrl
+          await markDelivered(...args);
         }
         await removeQueuedAction(item.id);
       } catch (e) {
@@ -329,43 +364,32 @@ export default function App() {
   // Save a partial drop-off (driver couldn't carry the full order in one trip).
   // Accumulates onto whatever's already been delivered so far; does NOT complete the delivery.
   const submitPartialDelivery = async (id, addedCrates, newPhotos, crateExchange, ctx) => {
-    // Try live first
     if (navigator.onLine) {
       try {
         const { data: cur, error: e1 } = await supabase
           .from("deliveries")
           .select("crates_delivered, photo_urls, backorder_crates, empty_crates_picked_up, empty_crates_left, extra_delivered")
-          .eq("id", id)
-          .single();
+          .eq("id", id).single();
         if (!e1) {
           const newTotal = (cur.crates_delivered || 0) + Number(addedCrates || 0);
           const mergedPhotos = [...(cur.photo_urls || []), ...newPhotos];
-          const { error } = await supabase
-            .from("deliveries")
-            .update({
-              crates_delivered: newTotal,
-              photo_urls: mergedPhotos,
-              status: "arrived",
-              extra_delivered: (cur.extra_delivered || 0) + Number(crateExchange?.extra || 0),
-              backorder_crates: (cur.backorder_crates || 0) + Number(crateExchange?.backorder || 0),
-              empty_crates_picked_up: (cur.empty_crates_picked_up || 0) + Number(crateExchange?.emptyPickedUp || 0),
-              empty_crates_left: Number(crateExchange?.emptyLeft || 0),
-            })
-            .eq("id", id);
+          const { error } = await supabase.from("deliveries").update({
+            crates_delivered: newTotal, photo_urls: mergedPhotos, status: "arrived",
+            extra_delivered: (cur.extra_delivered || 0) + Number(crateExchange?.extra || 0),
+            backorder_crates: (cur.backorder_crates || 0) + Number(crateExchange?.backorder || 0),
+            empty_crates_picked_up: (cur.empty_crates_picked_up || 0) + Number(crateExchange?.emptyPickedUp || 0),
+            empty_crates_left: Number(crateExchange?.emptyLeft || 0),
+          }).eq("id", id);
           if (!error) {
             await logEvent({ driver_id: ctx.driver_id, customer_id: ctx.customer_id, delivery_id: id, event_type: "partial_delivered" });
-            loadAll();
-            return;
+            loadAll(); return;
           }
         }
       } catch {}
     }
-    // Offline — queue it and optimistically update local state
-    const { queueAction: qa } = await import("./offlineQueue");
-    await qa("submitPartialDelivery", [id, addedCrates, newPhotos, crateExchange, ctx]);
+    await queueAction("submitPartialDelivery", [id, addedCrates, newPhotos, crateExchange, ctx]);
     setDeliveries((prev) => prev.map((d) => d.id === id ? {
-      ...d,
-      status: "arrived",
+      ...d, status: "arrived",
       crates_delivered: (d.crates_delivered || 0) + Number(addedCrates || 0),
       photo_urls: [...(d.photo_urls || []), ...newPhotos],
     } : d));
@@ -378,49 +402,34 @@ export default function App() {
         const { data: cur, error: e1 } = await supabase
           .from("deliveries")
           .select("crates_delivered, photo_urls, backorder_crates, empty_crates_picked_up, extra_delivered")
-          .eq("id", id)
-          .single();
+          .eq("id", id).single();
         if (!e1) {
           const finalCrates = (cur.crates_delivered || 0) + Number(addedCrates || 0);
           const mergedPhotos = [...(cur.photo_urls || []), ...photoUrls];
-          const { error } = await supabase
-            .from("deliveries")
-            .update({
-              status: "delivered",
-              crates_delivered: finalCrates,
-              eggs_delivered: 0,
-              photo_urls: mergedPhotos,
-              video_url: videoUrl,
-              missing_eggs: missingEggs,
-              missing_crates: missingCrates,
-              signature_url: signatureUrl,
-              big_large_delivered: sizes.bigLarge,
-              small_large_delivered: sizes.smallLarge,
-              medium_delivered: sizes.medium,
-              pullet_delivered: sizes.pullet,
-              extra_delivered: (cur.extra_delivered || 0) + Number(crateExchange?.extra || 0),
-              backorder_crates: (cur.backorder_crates || 0) + Number(crateExchange?.backorder || 0),
-              empty_crates_picked_up: (cur.empty_crates_picked_up || 0) + Number(crateExchange?.emptyPickedUp || 0),
-              empty_crates_left: Number(crateExchange?.emptyLeft || 0),
-              payment_collected: payment,
-              receipt_url: receiptUrl,
-              delivered_at: new Date().toISOString(),
-            })
-            .eq("id", id);
+          const { error } = await supabase.from("deliveries").update({
+            status: "delivered", crates_delivered: finalCrates, eggs_delivered: 0,
+            photo_urls: mergedPhotos, video_url: videoUrl,
+            missing_eggs: missingEggs, missing_crates: missingCrates,
+            signature_url: signatureUrl,
+            big_large_delivered: sizes.bigLarge, small_large_delivered: sizes.smallLarge,
+            medium_delivered: sizes.medium, pullet_delivered: sizes.pullet,
+            extra_delivered: (cur.extra_delivered || 0) + Number(crateExchange?.extra || 0),
+            backorder_crates: (cur.backorder_crates || 0) + Number(crateExchange?.backorder || 0),
+            empty_crates_picked_up: (cur.empty_crates_picked_up || 0) + Number(crateExchange?.emptyPickedUp || 0),
+            empty_crates_left: Number(crateExchange?.emptyLeft || 0),
+            payment_collected: payment, receipt_url: receiptUrl,
+            delivered_at: new Date().toISOString(),
+          }).eq("id", id);
           if (!error) {
             await logEvent({ driver_id: ctx.driver_id, customer_id: ctx.customer_id, delivery_id: id, event_type: "delivered" });
-            loadAll();
-            return;
+            loadAll(); return;
           }
         }
       } catch {}
     }
-    // Offline — queue and optimistically mark delivered locally
-    const { queueAction: qa } = await import("./offlineQueue");
-    await qa("markDelivered", [id, addedCrates, photoUrls, videoUrl, missingEggs, missingCrates, signatureUrl, sizes, payment, receiptUrl, crateExchange, ctx]);
+    await queueAction("markDelivered", [id, addedCrates, photoUrls, videoUrl, missingEggs, missingCrates, signatureUrl, sizes, payment, receiptUrl, crateExchange, ctx]);
     setDeliveries((prev) => prev.map((d) => d.id === id ? {
-      ...d,
-      status: "delivered",
+      ...d, status: "delivered",
       crates_delivered: (d.crates_delivered || 0) + Number(addedCrates || 0),
       photo_urls: [...(d.photo_urls || []), ...photoUrls],
       delivered_at: new Date().toISOString(),
