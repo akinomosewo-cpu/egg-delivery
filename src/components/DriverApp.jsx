@@ -632,47 +632,47 @@ export default function DriverApp({
                       emptyPickedUp: emptyPickedUp === "" ? 0 : Number(emptyPickedUp),
                       emptyLeft: emptyLeft === "" ? 0 : Number(emptyLeft),
                     };
-                    if (isFinalVisit) {
-                      await markDelivered(
-                        stop.id,
-                        thisVisit,
-                        stopPhotos,
-                        stopVideo,
-                        missingEggs === "" ? 0 : Number(missingEggs),
-                        missingCrates === "" ? 0 : Number(missingCrates),
-                        signatureUrl,
-                        {
-                          bigLarge: 0,
-                          smallLarge: 0,
-                          medium: 0,
-                          pullet: 0,
-                        },
-                        payment === "" ? 0 : Number(payment),
-                        receiptPhotos[0] || null,
-                        crateExchange,
-                        { driver_id: driverId, customer_id: stop.customer_id }
-                      );
-                    } else {
-                      await submitPartialDelivery(stop.id, thisVisit, stopPhotos, stopVideo, crateExchange, {
-                        driver_id: driverId,
-                        customer_id: stop.customer_id,
-                      });
+                    try {
+                      if (isFinalVisit) {
+                        await markDelivered(
+                          stop.id,
+                          thisVisit,
+                          stopPhotos,
+                          stopVideo,
+                          missingEggs === "" ? 0 : Number(missingEggs),
+                          missingCrates === "" ? 0 : Number(missingCrates),
+                          signatureUrl,
+                          { bigLarge: 0, smallLarge: 0, medium: 0, pullet: 0 },
+                          payment === "" ? 0 : Number(payment),
+                          receiptPhotos[0] || null,
+                          crateExchange,
+                          { driver_id: driverId, customer_id: stop.customer_id }
+                        );
+                      } else {
+                        await submitPartialDelivery(stop.id, thisVisit, stopPhotos, stopVideo, crateExchange, {
+                          driver_id: driverId,
+                          customer_id: stop.customer_id,
+                        });
+                      }
+                    } catch (e) {
+                      console.warn("Submit failed:", e.message);
+                    } finally {
+                      setBusy(false);
+                      setOpenStop(null);
+                      setDc("");
+                      setExtraDelivered("");
+                      setEmptyPickedUp("");
+                      setEmptyLeft("");
+                      setStopPhotos([]);
+                      setStopVideo(null);
+                      setMissingEggs("");
+                      setMissingCrates("");
+                      setBackorderCrates("");
+                      setSignatureUrl(null);
+                      setSignatureSkipped(false);
+                      setPayment("");
+                      setReceiptPhotos([]);
                     }
-                    setBusy(false);
-                    setOpenStop(null);
-                    setDc("");
-                    setExtraDelivered("");
-                    setEmptyPickedUp("");
-                    setEmptyLeft("");
-                    setStopPhotos([]);
-                    setStopVideo(null);
-                    setMissingEggs("");
-                    setMissingCrates("");
-                    setBackorderCrates("");
-                    setSignatureUrl(null);
-                    setSignatureSkipped(false);
-                    setPayment("");
-                    setReceiptPhotos([]);
                   }}
                 >
                   {busy ? "Saving…" : isFinalVisit ? "✓ Mark delivered" : "Save partial delivery"}

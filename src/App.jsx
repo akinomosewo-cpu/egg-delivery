@@ -133,11 +133,18 @@ export default function App() {
         if (item.actionName === "updateStatus") {
           const [id, status, ctx] = item.args;
           await runUpdateStatus(id, status, ctx);
+        } else if (item.actionName === "claimDelivery") {
+          await claimDelivery(...item.args);
+        } else if (item.actionName === "submitPartialDelivery") {
+          const [id, addedCrates, newPhotos, crateExchange, ctx] = item.args;
+          await submitPartialDelivery(id, addedCrates, newPhotos, crateExchange, ctx);
+        } else if (item.actionName === "markDelivered") {
+          await markDelivered(...item.args);
         }
         await removeQueuedAction(item.id);
       } catch (e) {
-        if (!looksOffline(e)) await removeQueuedAction(item.id); // a real error, not just offline — drop it, don't retry forever
-        break; // stop here, try the rest next time
+        if (!looksOffline(e)) await removeQueuedAction(item.id);
+        break;
       }
     }
     const remaining = await queueCount();
@@ -322,81 +329,102 @@ export default function App() {
   // Save a partial drop-off (driver couldn't carry the full order in one trip).
   // Accumulates onto whatever's already been delivered so far; does NOT complete the delivery.
   const submitPartialDelivery = async (id, addedCrates, newPhotos, crateExchange, ctx) => {
-    const { data: cur, error: e1 } = await supabase
-      .from("deliveries")
-      .select("crates_delivered, photo_urls, backorder_crates, empty_crates_picked_up, empty_crates_left, extra_delivered")
-      .eq("id", id)
-      .single();
-    if (e1) {
-      alert("Could not save: " + e1.message);
-      return;
+    // Try live first
+    if (navigator.onLine) {
+      try {
+        const { data: cur, error: e1 } = await supabase
+          .from("deliveries")
+          .select("crates_delivered, photo_urls, backorder_crates, empty_crates_picked_up, empty_crates_left, extra_delivered")
+          .eq("id", id)
+          .single();
+        if (!e1) {
+          const newTotal = (cur.crates_delivered || 0) + Number(addedCrates || 0);
+          const mergedPhotos = [...(cur.photo_urls || []), ...newPhotos];
+          const { error } = await supabase
+            .from("deliveries")
+            .update({
+              crates_delivered: newTotal,
+              photo_urls: mergedPhotos,
+              status: "arrived",
+              extra_delivered: (cur.extra_delivered || 0) + Number(crateExchange?.extra || 0),
+              backorder_crates: (cur.backorder_crates || 0) + Number(crateExchange?.backorder || 0),
+              empty_crates_picked_up: (cur.empty_crates_picked_up || 0) + Number(crateExchange?.emptyPickedUp || 0),
+              empty_crates_left: Number(crateExchange?.emptyLeft || 0),
+            })
+            .eq("id", id);
+          if (!error) {
+            await logEvent({ driver_id: ctx.driver_id, customer_id: ctx.customer_id, delivery_id: id, event_type: "partial_delivered" });
+            loadAll();
+            return;
+          }
+        }
+      } catch {}
     }
-    const newTotal = (cur.crates_delivered || 0) + Number(addedCrates || 0);
-    const mergedPhotos = [...(cur.photo_urls || []), ...newPhotos];
-    const { error } = await supabase
-      .from("deliveries")
-      .update({
-        crates_delivered: newTotal,
-        photo_urls: mergedPhotos,
-        status: "arrived",
-        extra_delivered: (cur.extra_delivered || 0) + Number(crateExchange?.extra || 0),
-        backorder_crates: (cur.backorder_crates || 0) + Number(crateExchange?.backorder || 0),
-        empty_crates_picked_up: (cur.empty_crates_picked_up || 0) + Number(crateExchange?.emptyPickedUp || 0),
-        empty_crates_left: Number(crateExchange?.emptyLeft || 0), // current standing debt at this stop, not cumulative
-      })
-      .eq("id", id);
-    if (error) {
-      alert("Could not save: " + error.message);
-      return;
-    }
-    await logEvent({ driver_id: ctx.driver_id, customer_id: ctx.customer_id, delivery_id: id, event_type: "partial_delivered" });
-    loadAll();
+    // Offline — queue it and optimistically update local state
+    const { queueAction: qa } = await import("./offlineQueue");
+    await qa("submitPartialDelivery", [id, addedCrates, newPhotos, crateExchange, ctx]);
+    setDeliveries((prev) => prev.map((d) => d.id === id ? {
+      ...d,
+      status: "arrived",
+      crates_delivered: (d.crates_delivered || 0) + Number(addedCrates || 0),
+      photo_urls: [...(d.photo_urls || []), ...newPhotos],
+    } : d));
   };
 
   // Complete a delivery — called once cumulative delivered crates reach the assigned amount
   const markDelivered = async (id, addedCrates, photoUrls, videoUrl, missingEggs, missingCrates, signatureUrl, sizes, payment, receiptUrl, crateExchange, ctx) => {
-    const { data: cur, error: e1 } = await supabase
-      .from("deliveries")
-      .select("crates_delivered, photo_urls, backorder_crates, empty_crates_picked_up, extra_delivered")
-      .eq("id", id)
-      .single();
-    if (e1) {
-      alert("Could not save: " + e1.message);
-      return;
+    if (navigator.onLine) {
+      try {
+        const { data: cur, error: e1 } = await supabase
+          .from("deliveries")
+          .select("crates_delivered, photo_urls, backorder_crates, empty_crates_picked_up, extra_delivered")
+          .eq("id", id)
+          .single();
+        if (!e1) {
+          const finalCrates = (cur.crates_delivered || 0) + Number(addedCrates || 0);
+          const mergedPhotos = [...(cur.photo_urls || []), ...photoUrls];
+          const { error } = await supabase
+            .from("deliveries")
+            .update({
+              status: "delivered",
+              crates_delivered: finalCrates,
+              eggs_delivered: 0,
+              photo_urls: mergedPhotos,
+              video_url: videoUrl,
+              missing_eggs: missingEggs,
+              missing_crates: missingCrates,
+              signature_url: signatureUrl,
+              big_large_delivered: sizes.bigLarge,
+              small_large_delivered: sizes.smallLarge,
+              medium_delivered: sizes.medium,
+              pullet_delivered: sizes.pullet,
+              extra_delivered: (cur.extra_delivered || 0) + Number(crateExchange?.extra || 0),
+              backorder_crates: (cur.backorder_crates || 0) + Number(crateExchange?.backorder || 0),
+              empty_crates_picked_up: (cur.empty_crates_picked_up || 0) + Number(crateExchange?.emptyPickedUp || 0),
+              empty_crates_left: Number(crateExchange?.emptyLeft || 0),
+              payment_collected: payment,
+              receipt_url: receiptUrl,
+              delivered_at: new Date().toISOString(),
+            })
+            .eq("id", id);
+          if (!error) {
+            await logEvent({ driver_id: ctx.driver_id, customer_id: ctx.customer_id, delivery_id: id, event_type: "delivered" });
+            loadAll();
+            return;
+          }
+        }
+      } catch {}
     }
-    const finalCrates = (cur.crates_delivered || 0) + Number(addedCrates || 0);
-    const mergedPhotos = [...(cur.photo_urls || []), ...photoUrls];
-    const { error } = await supabase
-      .from("deliveries")
-      .update({
-        status: "delivered",
-        crates_delivered: finalCrates,
-        eggs_delivered: 0,
-        photo_urls: mergedPhotos,
-        video_url: videoUrl,
-        missing_eggs: missingEggs,
-        missing_crates: missingCrates,
-        signature_url: signatureUrl,
-        big_large_delivered: sizes.bigLarge,
-        small_large_delivered: sizes.smallLarge,
-        medium_delivered: sizes.medium,
-        pullet_delivered: sizes.pullet,
-        extra_delivered: (cur.extra_delivered || 0) + Number(crateExchange?.extra || 0),
-        backorder_crates: (cur.backorder_crates || 0) + Number(crateExchange?.backorder || 0),
-        empty_crates_picked_up: (cur.empty_crates_picked_up || 0) + Number(crateExchange?.emptyPickedUp || 0),
-        empty_crates_left: Number(crateExchange?.emptyLeft || 0),
-        payment_collected: payment,
-        receipt_url: receiptUrl,
-        delivered_at: new Date().toISOString(),
-      })
-      .eq("id", id);
-    if (error) {
-      alert("Could not save: " + error.message);
-      return;
-    }
-    await logEvent({ driver_id: ctx.driver_id, customer_id: ctx.customer_id, delivery_id: id, event_type: "delivered" });
-    loadAll();
-
+    // Offline — queue and optimistically mark delivered locally
+    const { queueAction: qa } = await import("./offlineQueue");
+    await qa("markDelivered", [id, addedCrates, photoUrls, videoUrl, missingEggs, missingCrates, signatureUrl, sizes, payment, receiptUrl, crateExchange, ctx]);
+    setDeliveries((prev) => prev.map((d) => d.id === id ? {
+      ...d,
+      status: "delivered",
+      crates_delivered: (d.crates_delivered || 0) + Number(addedCrates || 0),
+      photo_urls: [...(d.photo_urls || []), ...photoUrls],
+      delivered_at: new Date().toISOString(),
+    } : d));
   };
 
   const addDriver = async (name) => {
