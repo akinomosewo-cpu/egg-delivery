@@ -393,8 +393,8 @@ export default function DriverApp({
           {stop.status === "in_transit" && tick >= 0 && (() => {
             const startedAt = stop.started_at ? new Date(stop.started_at) : null;
             const minsElapsed = startedAt ? (Date.now() - startedAt.getTime()) / 60000 : 999;
-            const locked = minsElapsed < 2;
-            const secsLeft = locked ? Math.ceil((2 - minsElapsed) * 60) : 0;
+            const locked = minsElapsed < 4;
+            const secsLeft = locked ? Math.ceil((4 - minsElapsed) * 60) : 0;
             return (
               <Btn
                 full
@@ -566,8 +566,7 @@ export default function DriverApp({
                         payment === "" ? 0 : Number(payment),
                         receiptPhotos[0] || null,
                         crateExchange,
-                        { driver_id: driverId, customer_id: stop.customer_id },
-                        receiptPhotos
+                        { driver_id: driverId, customer_id: stop.customer_id }
                       );
                     } else {
                       await submitPartialDelivery(stop.id, thisVisit, stopPhotos, stopVideo, crateExchange, {

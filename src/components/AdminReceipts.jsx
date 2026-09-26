@@ -1,191 +1,114 @@
-import { useState } from "react";
-import { T, Btn } from "./ui";
+import { useState, useMemo } from "react";
+import { T } from "./ui";
 
-function fmtDate(d) {
-  if (!d) return "—";
-  return new Date(d + "T00:00:00").toLocaleDateString("en-NG", {
-    weekday: "short", day: "numeric", month: "short", year: "numeric",
-  });
-}
+const fmtDate = (d) => new Date(d).toLocaleDateString("en-NG", { day: "2-digit", month: "short", year: "numeric" });
+const fmtMoney = (n) => Number(n || 0).toLocaleString("en-NG", { minimumFractionDigits: 0 });
 
-function fmtMoney(v) {
-  if (!v && v !== 0) return "—";
-  return "₦" + Number(v).toLocaleString("en-NG");
-}
+export default function AdminReceipts({ customers, deliveries }) {
+  const today = new Date().toLocaleDateString("en-CA");
+  const [dateFrom, setDateFrom] = useState(today);
+  const [dateTo, setDateTo] = useState(today);
 
-export default function AdminReceipts({ deliveries, allDeliveries, customers, drivers }) {
-  // Use today as default date filter
-  const todayStr = new Date().toLocaleDateString("en-CA");
-  const [selectedDate, setSelectedDate] = useState(todayStr);
-  const [expandedId, setExpandedId] = useState(null);
+  const customerName = (id) => (customers || []).find((c) => c.id === id)?.name || "Unknown";
 
-  // Combine today's deliveries + all-time for date filtering
-  const allCombined = [
-    ...(deliveries || []),
-    ...(allDeliveries || []).filter(
-      (d) => !(deliveries || []).find((dd) => dd.id === d.id)
-    ),
-  ];
+  const rows = useMemo(() => {
+    return (deliveries || [])
+      .filter((d) => {
+        if (!d.delivery_date) return false;
+        if (d.delivery_date < dateFrom) return false;
+        if (d.delivery_date > dateTo) return false;
+        // Only show rows that have either a receipt photo or a payment
+        const hasReceipt = (d.receipt_url || (d.receipt_urls && d.receipt_urls.length > 0));
+        const hasPayment = Number(d.payment_collected || 0) > 0;
+        return hasReceipt || hasPayment;
+      })
+      .sort((a, b) => b.delivery_date.localeCompare(a.delivery_date));
+  }, [deliveries, dateFrom, dateTo]);
 
-  // Get all unique delivery dates for the date picker
-  const allDates = [...new Set(
-    allCombined
-      .filter((d) => d.delivery_date)
-      .map((d) => d.delivery_date)
-  )].sort((a, b) => b.localeCompare(a));
-
-  // Filter to selected date, only completed deliveries with a receipt or payment
-  const filtered = allCombined.filter(
-    (d) =>
-      d.delivery_date === selectedDate &&
-      (d.receipt_url || (d.payment_collected && Number(d.payment_collected) > 0))
-  );
-
-  const totalPayment = filtered.reduce(
-    (s, d) => s + Number(d.payment_collected || 0), 0
-  );
-
-  const customerName = (id) =>
-    (customers || []).find((c) => c.id === id)?.name || "Unknown customer";
-  const driverName = (id) =>
-    (drivers || []).find((d) => d.id === id)?.name || "Unknown driver";
+  const totalCollected = rows.reduce((s, d) => s + Number(d.payment_collected || 0), 0);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ fontWeight: 800, fontSize: 16 }}>Receipts</div>
+      <div style={{ fontWeight: 800, fontSize: 17 }}>Receipts</div>
 
-      {/* Date picker */}
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: T.mute }}>Date:</div>
-        <select
-          value={selectedDate}
-          onChange={(e) => { setSelectedDate(e.target.value); setExpandedId(null); }}
-          style={{
-            padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${T.line}`,
-            fontSize: 14, fontFamily: "inherit", background: T.card, color: T.ink,
-            fontWeight: 700, cursor: "pointer",
-          }}
-        >
-          {allDates.length === 0 && (
-            <option value={todayStr}>{fmtDate(todayStr)}</option>
-          )}
-          {allDates.map((d) => (
-            <option key={d} value={d}>{fmtDate(d)}</option>
-          ))}
-        </select>
+      {/* Date filter */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <div>
+          <div style={{ fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 4 }}>From</div>
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            style={{ padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${T.line}`, fontFamily: "inherit", fontSize: 14 }}
+          />
+        </div>
+        <div>
+          <div style={{ fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 4 }}>To</div>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            style={{ padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${T.line}`, fontFamily: "inherit", fontSize: 14 }}
+          />
+        </div>
       </div>
 
-      {/* Summary bar */}
-      {filtered.length > 0 && (
-        <div style={{
-          background: T.tan, borderRadius: 10, padding: "10px 14px",
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-        }}>
-          <div style={{ fontSize: 13, color: T.mute, fontWeight: 600 }}>
-            {filtered.length} receipt{filtered.length !== 1 ? "s" : ""} on {fmtDate(selectedDate)}
-          </div>
-          <div style={{ fontWeight: 800, fontSize: 15 }}>
-            {fmtMoney(totalPayment)} collected
-          </div>
-        </div>
-      )}
+      {/* Summary */}
+      <div style={{ background: T.tan, borderRadius: 10, padding: "10px 14px", fontSize: 14 }}>
+        <span style={{ fontWeight: 800 }}>{rows.length}</span> record{rows.length !== 1 ? "s" : ""} ·{" "}
+        <span style={{ fontWeight: 800 }}>₦{fmtMoney(totalCollected)}</span> collected
+      </div>
 
-      {/* Receipt cards */}
-      {filtered.length === 0 ? (
-        <div style={{
-          textAlign: "center", color: T.mute, fontSize: 14, padding: "32px 20px",
-          background: T.card, borderRadius: 12, border: `1.5px solid ${T.line}`,
-        }}>
-          No receipts or payments recorded for {fmtDate(selectedDate)}.
+      {/* Records */}
+      {rows.length === 0 ? (
+        <div style={{ textAlign: "center", color: T.mute, fontSize: 14, padding: 24 }}>
+          No receipts or payments found for this date range.
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {filtered.map((d) => {
-            const isOpen = expandedId === d.id;
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {rows.map((d) => {
+            const photos = d.receipt_urls && d.receipt_urls.length > 0
+              ? d.receipt_urls
+              : d.receipt_url
+              ? [d.receipt_url]
+              : [];
             return (
               <div
                 key={d.id}
-                style={{
-                  background: T.card, borderRadius: 12,
-                  border: `1.5px solid ${T.line}`, overflow: "hidden",
-                }}
+                style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 14 }}
               >
-                {/* Header row */}
-                <button
-                  onClick={() => setExpandedId(isOpen ? null : d.id)}
-                  style={{
-                    width: "100%", textAlign: "left", padding: "14px 16px",
-                    border: "none", background: "none", cursor: "pointer",
-                    fontFamily: "inherit", display: "flex",
-                    justifyContent: "space-between", alignItems: "center",
-                  }}
-                >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
                   <div>
-                    <div style={{ fontWeight: 800, fontSize: 15, color: T.ink }}>
-                      {customerName(d.customer_id)}
-                    </div>
-                    <div style={{ fontSize: 12, color: T.mute, marginTop: 2 }}>
-                      Driver: {driverName(d.driver_id)}
-                      {d.crates_delivered > 0 && ` · ${d.crates_delivered} crates delivered`}
-                    </div>
+                    <div style={{ fontWeight: 800, fontSize: 15 }}>{customerName(d.customer_id)}</div>
+                    <div style={{ fontSize: 12, color: T.mute }}>{fmtDate(d.delivery_date)}</div>
                   </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontWeight: 800, fontSize: 15, color: T.ink }}>
-                      {fmtMoney(d.payment_collected)}
+                  {Number(d.payment_collected || 0) > 0 && (
+                    <div style={{ fontWeight: 800, fontSize: 15, color: T.green }}>
+                      ₦{fmtMoney(d.payment_collected)}
                     </div>
-                    <div style={{ fontSize: 11, color: T.mute }}>
-                      {isOpen ? "▲ hide" : "▼ show"}
-                    </div>
-                  </div>
-                </button>
+                  )}
+                </div>
 
-                {/* Expanded: receipt photo + payment details */}
-                {isOpen && (
-                  <div style={{
-                    borderTop: `1px solid ${T.line}`, padding: "14px 16px",
-                    display: "flex", flexDirection: "column", gap: 12,
-                  }}>
-                    <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-                      <div style={{ flex: 1, minWidth: 140 }}>
-                        <div style={{ fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 4 }}>Payment collected</div>
-                        <div style={{ fontWeight: 800, fontSize: 18 }}>{fmtMoney(d.payment_collected)}</div>
-                      </div>
-                      {d.price_due > 0 && (
-                        <div style={{ flex: 1, minWidth: 140 }}>
-                          <div style={{ fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 4 }}>Price due</div>
-                          <div style={{ fontWeight: 800, fontSize: 18 }}>{fmtMoney(d.price_due)}</div>
-                          {d.payment_collected < d.price_due && (
-                            <div style={{ fontSize: 12, color: T.red, fontWeight: 700, marginTop: 2 }}>
-                              Outstanding: {fmtMoney(d.price_due - d.payment_collected)}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    {d.receipt_url ? (
-                      <div>
-                        <div style={{ fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 8 }}>Receipt photo</div>
-                        <a href={d.receipt_url} target="_blank" rel="noreferrer">
-                          <img
-                            src={d.receipt_url}
-                            alt="Receipt"
-                            style={{
-                              width: "100%", maxWidth: 380, borderRadius: 10,
-                              border: `1.5px solid ${T.line}`, display: "block",
-                            }}
-                          />
-                        </a>
-                        <div style={{ fontSize: 11, color: T.mute, marginTop: 4 }}>
-                          Tap image to open full size
-                        </div>
-                      </div>
-                    ) : (
-                      <div style={{ fontSize: 13, color: T.mute, fontStyle: "italic" }}>
-                        No receipt photo — payment recorded only.
-                      </div>
-                    )}
+                {/* Receipt photos */}
+                {photos.length > 0 && (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                    {photos.map((url, i) => (
+                      <a key={i} href={url} target="_blank" rel="noreferrer">
+                        <img
+                          src={url}
+                          alt={`Receipt ${i + 1}`}
+                          style={{
+                            width: 80, height: 80, objectFit: "cover",
+                            borderRadius: 8, border: `1.5px solid ${T.line}`,
+                          }}
+                        />
+                      </a>
+                    ))}
                   </div>
+                )}
+
+                {photos.length === 0 && Number(d.payment_collected || 0) > 0 && (
+                  <div style={{ fontSize: 12, color: T.mute, marginTop: 4 }}>No receipt photo</div>
                 )}
               </div>
             );

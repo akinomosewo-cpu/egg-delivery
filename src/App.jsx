@@ -14,9 +14,10 @@ import ActivityLogTable from "./components/ActivityLogTable";
 import AdminBalances from "./components/AdminBalances";
 import AdminCalendar from "./components/AdminCalendar";
 import AdminWarehouseAttendance from "./components/AdminWarehouseAttendance";
+import AdminReceipts from "./components/AdminReceipts";
 import DriverApp from "./components/DriverApp";
 
-const ADMIN_PIN = "8791"; // change this to change the admin password
+const ADMIN_PIN = "1003"; // change this to change the admin password
 
 export default function App() {
   const [device, setDevice] = useState("driver"); // driver-first: workers open this most
@@ -353,7 +354,7 @@ export default function App() {
   };
 
   // Complete a delivery — called once cumulative delivered crates reach the assigned amount
-  const markDelivered = async (id, addedCrates, photoUrls, videoUrl, missingEggs, missingCrates, signatureUrl, sizes, payment, receiptUrl, crateExchange, ctx, receiptUrls) => {
+  const markDelivered = async (id, addedCrates, photoUrls, videoUrl, missingEggs, missingCrates, signatureUrl, sizes, payment, receiptUrl, crateExchange, ctx) => {
     const { data: cur, error: e1 } = await supabase
       .from("deliveries")
       .select("crates_delivered, photo_urls, backorder_crates, empty_crates_picked_up, extra_delivered")
@@ -385,8 +386,7 @@ export default function App() {
         empty_crates_picked_up: (cur.empty_crates_picked_up || 0) + Number(crateExchange?.emptyPickedUp || 0),
         empty_crates_left: Number(crateExchange?.emptyLeft || 0),
         payment_collected: payment,
-        receipt_url: receiptUrl || (receiptUrls && receiptUrls[0]) || null,
-        receipt_urls: receiptUrls || (receiptUrl ? [receiptUrl] : []),
+        receipt_url: receiptUrl,
         delivered_at: new Date().toISOString(),
       })
       .eq("id", id);
@@ -782,6 +782,7 @@ export default function App() {
                   { key: "reports", label: "Reports" },
                   { key: "manage", label: "Manage" },
                   { key: "attendance", label: "Warehouse Attendance" },
+                  { key: "receipts", label: "Receipts" },
                 ];
                 const activeInMore = moreTabs.find((t) => t.key === adminTab);
                 return (
@@ -928,6 +929,8 @@ export default function App() {
               <AdminReports drivers={drivers} customers={customers} helpers={helpers} />
             ) : adminTab === "attendance" ? (
               <AdminWarehouseAttendance />
+            ) : adminTab === "receipts" ? (
+              <AdminReceipts customers={customers} deliveries={allDeliveriesForStock} />
             ) : (
               <AdminManage
                 drivers={drivers}
