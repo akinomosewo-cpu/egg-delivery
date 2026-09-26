@@ -280,11 +280,7 @@ export default function App() {
       .eq("id", id)
       .is("driver_id", null)
       .select();
-    if (error) {
-      alert("Could not claim: " + error.message);
-      loadAll();
-      return false;
-    }
+    if (error) throw error; // let withOfflineQueue catch network errors
     if (!data || data.length === 0) {
       loadAll();
       return false; // someone else already claimed it
