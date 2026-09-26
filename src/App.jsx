@@ -1,997 +1,1080 @@
-import { useEffect, useState, useCallback } from "react";
-import { supabase, today, logEvent, requestNotificationPermission, notify } from "./supabase";
-import { queueAction, getQueuedActions, removeQueuedAction, queueCount, looksOffline, getPendingPhotos, removePendingPhoto, isPendingUrl } from "./offlineQueue";
-import { T } from "./components/ui";
-import AdminPlan from "./components/AdminPlan";
-import AdminDashboard from "./components/AdminDashboard";
-import AdminManage from "./components/AdminManage";
-import AdminReports from "./components/AdminReports";
-import AdminMissingCrates from "./components/AdminMissingCrates";
-import AdminDayList from "./components/AdminDayList";
-import AdminMap from "./components/AdminMap";
-import AdminStock from "./components/AdminStock";
-import ActivityLogTable from "./components/ActivityLogTable";
-import AdminBalances from "./components/AdminBalances";
-import AdminCalendar from "./components/AdminCalendar";
-import AdminWarehouseAttendance from "./components/AdminWarehouseAttendance";
-import AdminReceipts from "./components/AdminReceipts";
-import DriverApp from "./components/DriverApp";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { T, Btn, Tag, NumInput, MediaCapture, SignaturePad, fmtQty } from "./ui";
+import { uploadPhoto } from "../supabase";
+import { tagAsDriver } from "../notifications";
+import { queueAction, getQueuedActions, removeQueuedAction, looksOffline } from "../offlineQueue";
 
-const ADMIN_PIN = "1003"; // change this to change the admin password
+const sizesLine = (d) => {
+  const parts = [
+    ["Big large", d.big_large_assigned],
+    ["Small large", d.small_large_assigned],
+    ["Medium", d.medium_assigned],
+    ["Pullet", d.pullet_assigned],
+    ["Extra", d.extra_assigned],
+  ].filter(([, v]) => v > 0);
+  return parts.length ? parts.map(([l, v]) => `${l}: ${v}`).join(" · ") : null;
+};
 
-export default function App() {
-  const [device, setDevice] = useState("driver"); // driver-first: workers open this most
-  const [adminTab, setAdminTab] = useState("plan");
-  const [moreOpen, setMoreOpen] = useState(false);
-  const [adminUnlocked, setAdminUnlocked] = useState(false); // always asks for the PIN fresh
-  const [pinEntry, setPinEntry] = useState("");
-  const [pinError, setPinError] = useState(false);
-  const [drivers, setDrivers] = useState([]);
-  const [customers, setCustomers] = useState([]);
-  const [helpers, setHelpers] = useState([]);
-  const [deliveries, setDeliveries] = useState([]);
-  const [hiddenDeliveries, setHiddenDeliveries] = useState([]);
-  const [crateReturns, setCrateReturns] = useState([]);
-  const [events, setEvents] = useState([]);
-  const [openDebts, setOpenDebts] = useState([]); // crates owed by customers, not yet collected back
-  const [stockEntries, setStockEntries] = useState([]);
-  const [allDeliveriesForStock, setAllDeliveriesForStock] = useState([]);
-  const [stockCounts, setStockCounts] = useState([]);
-  const [customerPayments, setCustomerPayments] = useState([]);
-  const [driverLocations, setDriverLocations] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [pendingSync, setPendingSync] = useState(0);
-  const [error, setError] = useState(null);
+const STATUS_LABEL = {
+  pending: "Not started",
+  in_transit: "On the way",
+  arrived: "Arrived",
+  delivered: "Delivered",
+};
 
-  // ---- Load everything for today ----
-  const loadAll = useCallback(async () => {
-    try {
-      const [drv, cus, hlp, del, hiddenDel, ret, evt, debts, locs, stock, allDel, counts, payments] = await Promise.all([
-        supabase.from("drivers").select("*").eq("active", true).order("name"),
-        supabase.from("customers").select("*").eq("active", true).order("name"),
-        supabase.from("helpers").select("*").eq("active", true).order("name"),
-        supabase.from("deliveries").select("*").eq("delivery_date", today()).is("hidden_until", null).order("created_at"),
-        supabase.from("deliveries").select("*").gte("hidden_until", today()).order("delivery_date"),
-        supabase.from("crate_returns").select("*").eq("return_date", today()),
-        supabase.from("delivery_events").select("*").order("event_date", { ascending: false }).order("created_at", { ascending: true }).limit(300),
-        supabase.from("deliveries").select("*").gt("missing_crates", 0).eq("missing_crates_resolved", false).order("delivery_date"),
-        supabase.from("driver_locations").select("*"),
-        supabase.from("stock_entries").select("*"),
-        supabase.from("deliveries").select("customer_id, crates_assigned, price_due, payment_collected, missing_crates, missing_crates_resolved, backorder_crates, empty_crates_left, delivery_date"), // all-time — used for stock math and customer balances
-        supabase.from("stock_counts").select("*").order("created_at", { ascending: false }).limit(50),
-        supabase.from("customer_payments").select("*").order("created_at", { ascending: false }),
-      ]);
-      const firstError = drv.error || cus.error || hlp.error || del.error || hiddenDel.error || ret.error || evt.error || debts.error || locs.error || stock.error || allDel.error || counts.error || payments.error;
-      if (firstError) throw firstError;
-      setDrivers(drv.data);
-      setCustomers(cus.data);
-      setHelpers(hlp.data);
-      setDeliveries(del.data);
-      setHiddenDeliveries(hiddenDel.data || []);
-      setCrateReturns(ret.data);
-      setEvents(evt.data);
-      setOpenDebts(debts.data);
-      setDriverLocations(locs.data);
-      setStockEntries(stock.data);
-      setAllDeliveriesForStock(allDel.data);
-      setStockCounts(counts.data);
-      setCustomerPayments(payments.data);
-      setError(null);
-    } catch (e) {
-      console.error(e);
-      setError(e.message || "Could not load data");
-    } finally {
-      setLoading(false);
-    }
+export default function DriverApp({
+  drivers,
+  customers,
+  helpers,
+  deliveries,
+  setDeliveries,
+  openDebts,
+  allDeliveries,
+  claimDelivery,
+  unclaimDelivery,
+  updateStatus,
+  submitPartialDelivery,
+  markDelivered,
+  resolveMissingCrates,
+  collectMissingCrates,
+  collectEmptyCrates,
+  updateDriverLocation,
+  addStockCount,
+  stockCounts,
+  availableStock,
+}) {
+  const [driverId, setDriverId] = useState(null);
+  const [claimingId, setClaimingId] = useState(null);
+  const [pickedHelpers, setPickedHelpers] = useState([]);
+  const [openStop, setOpenStop] = useState(null);
+  const [dc, setDc] = useState("");
+  const [extraDelivered, setExtraDelivered] = useState("");
+  const [emptyPickedUp, setEmptyPickedUp] = useState("");
+  const [emptyLeft, setEmptyLeft] = useState("");
+  const [stopPhotos, setStopPhotos] = useState([]);
+  const [stopVideo, setStopVideo] = useState(null);
+  const [missingEggs, setMissingEggs] = useState("");
+  const [missingCrates, setMissingCrates] = useState("");
+  const [backorderCrates, setBackorderCrates] = useState("");
+  const [signatureUrl, setSignatureUrl] = useState(null);
+  const [signatureSkipped, setSignatureSkipped] = useState(false);
+  const [payment, setPayment] = useState("");
+  const [receiptPhotos, setReceiptPhotos] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [offlineToast, setOfflineToast] = useState(null);
+  // Tracks status updates made while offline so the UI can show the correct
+  // state immediately without waiting for Supabase to confirm the change.
+  const [optimisticStatus, setOptimisticStatus] = useState({});
+
+  const showOfflineToast = useCallback((msg) => {
+    setOfflineToast(msg);
+    setTimeout(() => setOfflineToast(null), 6000);
   }, []);
 
-  // ---- Realtime: any change re-syncs everyone, and pings the admin on new deliveries ----
-  useEffect(() => {
-    loadAll();
-    const channel = supabase
-      .channel("live-updates")
-      .on("postgres_changes", { event: "*", schema: "public", table: "deliveries" }, loadAll)
-      .on("postgres_changes", { event: "*", schema: "public", table: "crate_returns" }, loadAll)
-      .on("postgres_changes", { event: "*", schema: "public", table: "drivers" }, loadAll)
-      .on("postgres_changes", { event: "*", schema: "public", table: "customers" }, loadAll)
-      .on("postgres_changes", { event: "*", schema: "public", table: "helpers" }, loadAll)
-      .on("postgres_changes", { event: "*", schema: "public", table: "driver_locations" }, loadAll)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "delivery_events" }, (payload) => {
-        loadAll();
-        const row = payload.new;
-        if (row.event_type === "delivered") notify("Delivery complete", "A driver just marked a stop delivered.");
-        if (row.event_type === "crates_submitted") notify("Crates submitted", "A driver sent in their crate count.");
-      })
-      .subscribe();
-    return () => supabase.removeChannel(channel);
-  }, [loadAll]);
-
-  // Backup for realtime: silently re-fetch every 5 seconds in case a realtime
-  // event gets missed (weak signal, brief disconnect, etc). No spinner, no
-  // page reload — just quietly keeps the data current in the background.
-  useEffect(() => {
-    const interval = setInterval(() => {
-      loadAll();
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [loadAll]);
-
-  // Offline queue: process anything waiting whenever we come back online,
-  // and check periodically too (some browsers don't fire 'online' reliably)
-  const processQueue = useCallback(async () => {
-    if (!navigator.onLine) return;
-
-    // Step 1: upload any locally-saved photos, build a URL swap map
-    const urlSwap = {};
-    try {
-      const pending = await getPendingPhotos();
-      for (const p of pending) {
+  const withOfflineQueue = useCallback(
+    (actionName, fn) =>
+      async (...args) => {
         try {
-          const file = new File([p.buffer], p.name, { type: p.type });
-          const ext = p.name.split(".").pop() || "jpg";
-          const path = `${today()}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-          const { error } = await supabase.storage.from("delivery-photos").upload(path, file);
-          if (!error) {
-            const { data } = supabase.storage.from("delivery-photos").getPublicUrl(path);
-            urlSwap[p.id] = data.publicUrl;
-            await removePendingPhoto(p.id);
+          return await fn(...args);
+        } catch (err) {
+          if (looksOffline(err)) {
+            await queueAction(actionName, args);
+            // Optimistically update local delivery state so the driver can
+            // continue the delivery flow without waiting for real signal.
+            if (actionName === "updateStatus" && setDeliveries) {
+              const [deliveryId, newStatus] = args;
+              setDeliveries((prev) =>
+                prev.map((d) =>
+                  d.id === deliveryId
+                    ? { ...d, status: newStatus, ...(newStatus === "in_transit" ? { started_at: new Date().toISOString() } : newStatus === "arrived" ? { arrived_at: new Date().toISOString() } : {}) }
+                    : d
+                )
+              );
+            }
+            showOfflineToast("📡 No signal — action saved and will sync automatically when you're back online.");
+            return "__queued__";
           }
-        } catch (e) {
-          console.warn("Pending photo upload failed:", e.message);
-          break; // wait for next cycle if network drops again
+          throw err;
         }
-      }
-    } catch (e) {
-      console.warn("Photo queue check failed:", e.message);
-    }
-
-    // Swap pending:// URLs in any array of URLs
-    const swapUrls = (urls) => {
-      if (!Array.isArray(urls)) return urls;
-      return urls.map((u) => (isPendingUrl(u) && urlSwap[u] ? urlSwap[u] : u));
-    };
-
-    // Step 2: replay queued actions with real URLs substituted in
-    let items;
-    try {
-      items = await getQueuedActions();
-    } catch {
-      return;
-    }
-    for (const item of items) {
-      try {
-        if (item.actionName === "updateStatus") {
-          const [id, status, ctx] = item.args;
-          await runUpdateStatus(id, status, ctx);
-        } else if (item.actionName === "claimDelivery") {
-          await claimDelivery(...item.args);
-        } else if (item.actionName === "submitPartialDelivery") {
-          const [id, addedCrates, photos, crateExchange, ctx] = item.args;
-          await submitPartialDelivery(id, addedCrates, swapUrls(photos), crateExchange, ctx);
-        } else if (item.actionName === "markDelivered") {
-          const args = [...item.args];
-          args[2] = swapUrls(args[2]); // photoUrls
-          if (isPendingUrl(args[6]) && urlSwap[args[6]]) args[6] = urlSwap[args[6]]; // signatureUrl
-          if (isPendingUrl(args[9]) && urlSwap[args[9]]) args[9] = urlSwap[args[9]]; // receiptUrl
-          await markDelivered(...args);
-        }
-        await removeQueuedAction(item.id);
-      } catch (e) {
-        if (!looksOffline(e)) await removeQueuedAction(item.id);
-        break;
-      }
-    }
-    const remaining = await queueCount();
-    setPendingSync(remaining);
-    loadAll();
-  }, [loadAll]);
-
+      },
+    [showOfflineToast, setDeliveries]
+  );
+  const [tick, setTick] = useState(0);
   useEffect(() => {
-    const goOnline = () => {
-      setIsOnline(true);
-      processQueue();
-    };
-    const goOffline = () => setIsOnline(false);
-    window.addEventListener("online", goOnline);
-    window.addEventListener("offline", goOffline);
-    queueCount().then(setPendingSync);
-    processQueue();
-    const interval = setInterval(processQueue, 15000);
-    return () => {
-      window.removeEventListener("online", goOnline);
-      window.removeEventListener("offline", goOffline);
-      clearInterval(interval);
-    };
-  }, [processQueue]);
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const [collectingDebtId, setCollectingDebtId] = useState(null);
+  const [collectingDebtType, setCollectingDebtType] = useState(null); // "missing" | "empty"
+  const [collectAmount, setCollectAmount] = useState("");
+  const [collectPhoto, setCollectPhoto] = useState(null);
 
-  // Ask for notification permission once the admin unlocks the dashboard
-  useEffect(() => {
-    if (adminUnlocked) requestNotificationPermission();
-  }, [adminUnlocked]);
+  // Shared card for a single open crate debt — used both in the top
+  // banner and the detailed list further down, so the same photo+amount
+  // evidence flow is available everywhere, regardless of which driver
+  // originally created the debt. `kind` distinguishes a missing-crates debt
+  // from an empty-crates-left debt, since both key off a delivery id and
+  // could otherwise collide in the collectingDebtId/collectingDebtType state.
+  const renderDebtCard = (debt, busyState, setBusyState, kind = "missing") => {
+    const c = customers.find((x) => x.id === debt.customer_id);
+    const isCollecting = collectingDebtId === debt.id && collectingDebtType === kind;
+    const owed = kind === "missing" ? debt.missing_crates : debt.empty_crates_left;
+    const collectFn = kind === "missing" ? collectMissingCrates : collectEmptyCrates;
+    const label = kind === "missing" ? "Collected the crates" : "Picked up the empty crates";
+    const owedText = kind === "missing" ? `Owes ${owed} crate${owed !== 1 ? "s" : ""}` : `${owed} empty crate${owed !== 1 ? "s" : ""} left there`;
+    return (
+      <div key={debt.id} style={{ background: "#FBEAE6", border: `1.5px solid ${T.red}`, borderRadius: 12, padding: 14 }}>
+        <div style={{ fontWeight: 800, fontSize: 14 }}>{c ? c.name : "…"}</div>
+        <div style={{ fontSize: 12, color: T.mute, marginBottom: 10 }}>
+          {owedText}
+          {c && c.area ? ` · ${c.area}` : ""}
+        </div>
 
-  const syncNow = async () => {
-    setSyncing(true);
-    await loadAll();
-    setTimeout(() => setSyncing(false), 400);
-  };
-
-  const unlockAdmin = () => setAdminUnlocked(true);
-
-  const lockAdmin = () => setAdminUnlocked(false);
-
-  const clearTodayData = async () => {
-    const ok = window.confirm(
-      "Clear ALL of today's deliveries, crate returns, and events?\n\nThis cannot be undone. Yesterday and earlier days are not affected."
-    );
-    if (!ok) return;
-    const d = today();
-    const [r1, r2, r3] = await Promise.all([
-      supabase.from("deliveries").delete().eq("delivery_date", d),
-      supabase.from("crate_returns").delete().eq("return_date", d),
-      supabase.from("delivery_events").delete().eq("event_date", d),
-    ]);
-    const err = r1.error || r2.error || r3.error;
-    if (err) alert("Could not clear: " + err.message);
-    loadAll();
-  };
-
-  // ---- Actions ----
-  const addDelivery = async (row) => {
-    const { error } = await supabase.from("deliveries").insert({ ...row, delivery_date: row.delivery_date || today() });
-    if (error) alert("Could not save: " + error.message);
-    else loadAll();
-  };
-
-  const removeDelivery = async (id) => {
-    const { error } = await supabase.from("deliveries").delete().eq("id", id).eq("status", "pending");
-    if (error) alert("Could not remove: " + error.message);
-    else loadAll();
-  };
-
-
-  const hideDelivery = async (id) => {
-    const { error } = await supabase.from("deliveries").update({ hidden_until: today() }).eq("id", id);
-    if (error) alert("Could not hide: " + error.message);
-    else loadAll();
-  };
-
-  const postponeDelivery = async (id) => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowStr = tomorrow.toISOString().slice(0, 10);
-    const { error } = await supabase.from("deliveries").update({ hidden_until: tomorrowStr, delivery_date: tomorrowStr }).eq("id", id);
-    if (error) alert("Could not postpone: " + error.message);
-    else loadAll();
-  };
-
-  const unhideDelivery = async (id) => {
-    const { error } = await supabase.from("deliveries").update({ hidden_until: null, delivery_date: today() }).eq("id", id);
-    if (error) alert("Could not unhide: " + error.message);
-    else loadAll();
-  };
-
-  // Claim an unassigned delivery — guarded so two drivers can't grab the same one.
-  // Returns true if the claim succeeded, false if someone else beat them to it.
-  const claimDelivery = async (id, driverId, helperIds) => {
-    const { data, error } = await supabase
-      .from("deliveries")
-      .update({ driver_id: driverId, helper_ids: helperIds, claimed_at: new Date().toISOString() })
-      .eq("id", id)
-      .is("driver_id", null)
-      .select();
-    if (error) throw error; // let withOfflineQueue catch network errors
-    if (!data || data.length === 0) {
-      loadAll();
-      return false; // someone else already claimed it
-    }
-    await logEvent({ driver_id: driverId, customer_id: data[0].customer_id, delivery_id: id, event_type: "claimed" });
-    loadAll();
-    return true;
-  };
-
-  // Undo an accidental claim — only allowed before any progress has been made,
-  // so nothing already photographed/delivered can get silently orphaned.
-  const unclaimDelivery = async (id, driverId) => {
-    const { data: cur, error: e1 } = await supabase
-      .from("deliveries")
-      .select("driver_id, customer_id, status, crates_delivered")
-      .eq("id", id)
-      .single();
-    if (e1) {
-      alert("Could not undo: " + e1.message);
-      return;
-    }
-    if (cur.driver_id !== driverId) {
-      alert("This isn't your delivery to return.");
-      loadAll();
-      return;
-    }
-    if ((cur.crates_delivered || 0) > 0) {
-      alert("Can't return this — some crates have already been delivered here.");
-      return;
-    }
-    const { error } = await supabase
-      .from("deliveries")
-      .update({ driver_id: null, helper_ids: [], claimed_at: null, status: "pending", started_at: null })
-      .eq("id", id);
-    if (error) {
-      alert("Could not undo: " + error.message);
-      return;
-    }
-    await logEvent({ driver_id: driverId, customer_id: cur.customer_id, delivery_id: id, event_type: "unclaimed" });
-    loadAll();
-  };
-
-  // Route status: pending -> in_transit -> arrived
-  // Offline-aware: this doesn't need a photo, so it's the one action that
-  // queues automatically and sends itself once signal comes back.
-  const runUpdateStatus = async (id, status, ctx) => {
-    const timeCol = status === "in_transit" ? { started_at: new Date().toISOString() } : status === "arrived" ? { arrived_at: new Date().toISOString() } : {};
-    const { error } = await supabase.from("deliveries").update({ status, ...timeCol }).eq("id", id);
-    if (error) throw error;
-    await logEvent({
-      driver_id: ctx.driver_id,
-      customer_id: ctx.customer_id,
-      delivery_id: id,
-      event_type: status === "in_transit" ? "route_started" : "arrived",
-    });
-  };
-
-  const updateStatus = async (id, status, ctx) => {
-    await runUpdateStatus(id, status, ctx);
-    loadAll();
-  };
-
-  // Save a partial drop-off (driver couldn't carry the full order in one trip).
-  // Accumulates onto whatever's already been delivered so far; does NOT complete the delivery.
-  const submitPartialDelivery = async (id, addedCrates, newPhotos, crateExchange, ctx) => {
-    if (navigator.onLine) {
-      try {
-        const { data: cur, error: e1 } = await supabase
-          .from("deliveries")
-          .select("crates_delivered, photo_urls, backorder_crates, empty_crates_picked_up, empty_crates_left, extra_delivered")
-          .eq("id", id).single();
-        if (!e1) {
-          const newTotal = (cur.crates_delivered || 0) + Number(addedCrates || 0);
-          const mergedPhotos = [...(cur.photo_urls || []), ...newPhotos];
-          const { error } = await supabase.from("deliveries").update({
-            crates_delivered: newTotal, photo_urls: mergedPhotos, status: "arrived",
-            extra_delivered: (cur.extra_delivered || 0) + Number(crateExchange?.extra || 0),
-            backorder_crates: (cur.backorder_crates || 0) + Number(crateExchange?.backorder || 0),
-            empty_crates_picked_up: (cur.empty_crates_picked_up || 0) + Number(crateExchange?.emptyPickedUp || 0),
-            empty_crates_left: Number(crateExchange?.emptyLeft || 0),
-          }).eq("id", id);
-          if (!error) {
-            await logEvent({ driver_id: ctx.driver_id, customer_id: ctx.customer_id, delivery_id: id, event_type: "partial_delivered" });
-            loadAll(); return;
-          }
-        }
-      } catch {}
-    }
-    await queueAction("submitPartialDelivery", [id, addedCrates, newPhotos, crateExchange, ctx]);
-    setDeliveries((prev) => prev.map((d) => d.id === id ? {
-      ...d, status: "arrived",
-      crates_delivered: (d.crates_delivered || 0) + Number(addedCrates || 0),
-      photo_urls: [...(d.photo_urls || []), ...newPhotos],
-    } : d));
-  };
-
-  // Complete a delivery — called once cumulative delivered crates reach the assigned amount
-  const markDelivered = async (id, addedCrates, photoUrls, videoUrl, missingEggs, missingCrates, signatureUrl, sizes, payment, receiptUrl, crateExchange, ctx) => {
-    if (navigator.onLine) {
-      try {
-        const { data: cur, error: e1 } = await supabase
-          .from("deliveries")
-          .select("crates_delivered, photo_urls, backorder_crates, empty_crates_picked_up, extra_delivered")
-          .eq("id", id).single();
-        if (!e1) {
-          const finalCrates = (cur.crates_delivered || 0) + Number(addedCrates || 0);
-          const mergedPhotos = [...(cur.photo_urls || []), ...photoUrls];
-          const { error } = await supabase.from("deliveries").update({
-            status: "delivered", crates_delivered: finalCrates, eggs_delivered: 0,
-            photo_urls: mergedPhotos, video_url: videoUrl,
-            missing_eggs: missingEggs, missing_crates: missingCrates,
-            signature_url: signatureUrl,
-            big_large_delivered: sizes.bigLarge, small_large_delivered: sizes.smallLarge,
-            medium_delivered: sizes.medium, pullet_delivered: sizes.pullet,
-            extra_delivered: (cur.extra_delivered || 0) + Number(crateExchange?.extra || 0),
-            backorder_crates: (cur.backorder_crates || 0) + Number(crateExchange?.backorder || 0),
-            empty_crates_picked_up: (cur.empty_crates_picked_up || 0) + Number(crateExchange?.emptyPickedUp || 0),
-            empty_crates_left: Number(crateExchange?.emptyLeft || 0),
-            payment_collected: payment, receipt_url: receiptUrl,
-            delivered_at: new Date().toISOString(),
-          }).eq("id", id);
-          if (!error) {
-            await logEvent({ driver_id: ctx.driver_id, customer_id: ctx.customer_id, delivery_id: id, event_type: "delivered" });
-            loadAll(); return;
-          }
-        }
-      } catch {}
-    }
-    await queueAction("markDelivered", [id, addedCrates, photoUrls, videoUrl, missingEggs, missingCrates, signatureUrl, sizes, payment, receiptUrl, crateExchange, ctx]);
-    setDeliveries((prev) => prev.map((d) => d.id === id ? {
-      ...d, status: "delivered",
-      crates_delivered: (d.crates_delivered || 0) + Number(addedCrates || 0),
-      photo_urls: [...(d.photo_urls || []), ...photoUrls],
-      delivered_at: new Date().toISOString(),
-    } : d));
-  };
-
-  const addDriver = async (name) => {
-    const { error } = await supabase.from("drivers").insert({ name });
-    if (error) alert("Could not add: " + error.message);
-    else loadAll();
-  };
-
-  const deactivateDriver = async (id) => {
-    const { error } = await supabase.from("drivers").update({ active: false }).eq("id", id);
-    if (error) alert("Could not remove: " + error.message);
-    else loadAll();
-  };
-
-  const addCustomer = async (row) => {
-    const { error } = await supabase.from("customers").insert(row);
-    if (error) alert("Could not add: " + error.message);
-    else loadAll();
-  };
-
-  const deactivateCustomer = async (id) => {
-    const { error } = await supabase.from("customers").update({ active: false }).eq("id", id);
-    if (error) alert("Could not remove: " + error.message);
-    else loadAll();
-  };
-
-  // Driver's live position — upserted quietly in the background while their app is open
-  const updateDriverLocation = async (driverId, lat, lng) => {
-    await supabase.from("driver_locations").upsert({ driver_id: driverId, lat, lng, updated_at: new Date().toISOString() });
-  };
-
-  // One-time lookup: turn a customer's text address into map coordinates, save it so it's never re-looked-up
-  const geocodeCustomer = async (customerId, lat, lng) => {
-    await supabase.from("customers").update({ lat, lng }).eq("id", customerId);
-  };
-
-  const addStockEntry = async (amount, note, driverId) => {
-    const { error } = await supabase.from("stock_entries").insert({ amount, note, driver_id: driverId || null });
-    if (error) alert("Could not save: " + error.message);
-    else loadAll();
-  };
-
-  // A driver's morning warehouse count — just a reference reading, doesn't
-  // feed into the stock math itself. Shared once-a-day across all drivers.
-  // Records a payment a customer makes later, paying down their outstanding
-  // balance. Photo proof required.
-  const recordPayment = async (customerId, amount, photoUrl, note) => {
-    const { error } = await supabase.from("customer_payments").insert({ customer_id: customerId, amount, photo_url: photoUrl, note: note || null });
-    if (error) alert("Could not save: " + error.message);
-    else loadAll();
-  };
-
-  // A driver's warehouse count — morning (start of shift) or evening (end of
-  // shift), split by egg size. Just a reference reading, doesn't feed into
-  // the stock math itself. Shared once-per-type-per-day across all drivers.
-  const addStockCount = async (driverId, countType, small, medium, large, photoUrl, videoUrl) => {
-    const { error } = await supabase.from("stock_counts").insert({
-      driver_id: driverId,
-      count_type: countType,
-      amount_small: small,
-      amount_medium: medium,
-      amount_large: large,
-      photo_url: photoUrl || null,
-      video_url: videoUrl || null,
-    });
-    if (error) alert("Could not save: " + error.message);
-    else loadAll();
-  };
-
-  const addHelper = async (name) => {
-    const { error } = await supabase.from("helpers").insert({ name });
-    if (error) alert("Could not add: " + error.message);
-    else loadAll();
-  };
-
-  const deactivateHelper = async (id) => {
-    const { error } = await supabase.from("helpers").update({ active: false }).eq("id", id);
-    if (error) alert("Could not remove: " + error.message);
-    else loadAll();
-  };
-
-  // Mark a customer's owed crates as collected back
-  const resolveMissingCrates = async (deliveryId, driverId) => {
-    const { error } = await supabase
-      .from("deliveries")
-      .update({ missing_crates_resolved: true, missing_crates_resolved_at: new Date().toISOString() })
-      .eq("id", deliveryId);
-    if (error) {
-      alert("Could not update: " + error.message);
-      return;
-    }
-    if (driverId) {
-      await logEvent({ driver_id: driverId, delivery_id: deliveryId, event_type: "debt_resolved" });
-    }
-    loadAll();
-  };
-
-  // Driver-facing collection: requires a photo, supports partial (some crates now, rest still owed)
-  const collectMissingCrates = async (deliveryId, driverId, amountCollected, photoUrl) => {
-    const { data: cur, error: e1 } = await supabase
-      .from("deliveries")
-      .select("missing_crates, missing_crates_photos")
-      .eq("id", deliveryId)
-      .single();
-    if (e1) {
-      alert("Could not save: " + e1.message);
-      return;
-    }
-    const remaining = Math.max(0, (cur.missing_crates || 0) - Number(amountCollected || 0));
-    const resolved = remaining <= 0;
-    const mergedPhotos = [...(cur.missing_crates_photos || []), photoUrl];
-    const { error } = await supabase
-      .from("deliveries")
-      .update({
-        missing_crates: remaining,
-        missing_crates_photos: mergedPhotos,
-        missing_crates_resolved: resolved,
-        missing_crates_resolved_at: resolved ? new Date().toISOString() : null,
-      })
-      .eq("id", deliveryId);
-    if (error) {
-      alert("Could not save: " + error.message);
-      return;
-    }
-    await logEvent({
-      driver_id: driverId,
-      delivery_id: deliveryId,
-      event_type: "debt_resolved",
-      detail: resolved ? "Fully collected" : `Collected ${amountCollected}, ${remaining} still owed`,
-    });
-    loadAll();
-  };
-
-  // Driver-facing collection of empty crates left with a customer — same shape
-  // as collectMissingCrates: requires a photo, supports partial pickup.
-  const collectEmptyCrates = async (deliveryId, driverId, amountCollected, photoUrl) => {
-    const { data: cur, error: e1 } = await supabase
-      .from("deliveries")
-      .select("empty_crates_left, empty_crates_photos")
-      .eq("id", deliveryId)
-      .single();
-    if (e1) {
-      alert("Could not save: " + e1.message);
-      return;
-    }
-    const remaining = Math.max(0, (cur.empty_crates_left || 0) - Number(amountCollected || 0));
-    const resolved = remaining <= 0;
-    const mergedPhotos = [...(cur.empty_crates_photos || []), photoUrl];
-    const { error } = await supabase
-      .from("deliveries")
-      .update({
-        empty_crates_left: remaining,
-        empty_crates_photos: mergedPhotos,
-      })
-      .eq("id", deliveryId);
-    if (error) {
-      alert("Could not save: " + error.message);
-      return;
-    }
-    await logEvent({
-      driver_id: driverId,
-      delivery_id: deliveryId,
-      event_type: "empty_crates_collected",
-      detail: resolved ? "All empty crates picked up" : `Picked up ${amountCollected}, ${remaining} still left`,
-    });
-    loadAll();
-  };
-
-  // ---- Layout ----
-  return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "transparent",
-        fontFamily: "'Helvetica Neue', 'Segoe UI', Arial, system-ui, sans-serif",
-        letterSpacing: "-0.01em",
-        color: T.ink,
-        padding: "env(safe-area-inset-top, 0px) 0 calc(40px + env(safe-area-inset-bottom, 0px))",
-      }}
-    >
-      <style>{`@keyframes pulse { 0%,100% {opacity:1} 50% {opacity:.35} }
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        * { -webkit-tap-highlight-color: transparent; }`}</style>
-
-      <div style={{ maxWidth: 460, margin: "0 auto", padding: "14px 16px 0" }}>
-        {/* Mode switcher */}
-        <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
-          <div style={{ display: "flex", background: T.tan, borderRadius: 12, padding: 4, flex: 1 }}>
-            {[
-              { key: "driver", label: "Driver" },
-              { key: "admin", label: "Admin" },
-            ].map((t) => (
-              <button
-                key={t.key}
-                onClick={() => { setDevice(t.key); if (t.key === "driver") lockAdmin(); }}
-                style={{
-                  flex: 1,
-                  padding: "10px 0",
-                  borderRadius: 9,
-                  border: "none",
-                  fontFamily: "inherit",
-                  fontWeight: 800,
-                  fontSize: 13,
-                  cursor: "pointer",
-                  background: device === t.key ? T.ink : "transparent",
-                  color: device === t.key ? T.paper : T.mute,
+        {!isCollecting ? (
+          <Btn
+            small
+            full
+            kind="green"
+            onClick={() => {
+              setCollectingDebtId(debt.id);
+              setCollectingDebtType(kind);
+              setCollectAmount("");
+              setCollectPhoto(null);
+            }}
+          >
+            {label}
+          </Btn>
+        ) : (
+          <div style={{ background: "#fff", borderRadius: 10, padding: 12, border: `1.5px solid ${T.line}` }}>
+            <div style={{ marginBottom: 10 }}>
+              <NumInput
+                label={`How many crates? (${owed} owed)`}
+                value={collectAmount}
+                onChange={setCollectAmount}
+                width={120}
+              />
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <MediaCapture
+                photos={collectPhoto ? [collectPhoto] : []}
+                onAddPhoto={(url) => setCollectPhoto(url)}
+                onRemovePhoto={() => setCollectPhoto(null)}
+                video={null}
+                onSetVideo={() => {}}
+                onRemoveVideo={() => {}}
+                upload={uploadPhoto}
+                maxPhotos={1}
+                label="Photo of the crates (required)"
+              />
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Btn kind="ghost" small onClick={() => { setCollectingDebtId(null); setCollectingDebtType(null); }}>
+                Cancel
+              </Btn>
+              <Btn
+                small
+                kind="green"
+                full
+                disabled={busyState || collectAmount === "" || Number(collectAmount) <= 0 || !collectPhoto}
+                onClick={async () => {
+                  setBusyState(true);
+                  await collectFn(debt.id, driverId, Number(collectAmount), collectPhoto);
+                  setBusyState(false);
+                  setCollectingDebtId(null);
+                  setCollectingDebtType(null);
+                  setCollectAmount("");
+                  setCollectPhoto(null);
                 }}
               >
-                {t.label}
-              </button>
-            ))}
+                {busyState ? "Saving…" : "Confirm collected"}
+              </Btn>
+            </div>
           </div>
+        )}
+      </div>
+    );
+  };
+  const [stockForm, setStockForm] = useState({
+    morning: { small: "", medium: "", large: "", photo: null, video: null },
+    evening: { small: "", medium: "", large: "", photo: null, video: null },
+  });
+  const [stockBusy, setStockBusy] = useState(false);
+
+  // Keep a stable reference to updateDriverLocation — App.jsx redefines this
+  // function on every render (including its own 5-second polling refresh),
+  // so putting it directly in the effect below would tear down and restart
+  // the location watch constantly, causing repeated permission prompts.
+  const updateDriverLocationRef = useRef(updateDriverLocation);
+  useEffect(() => {
+    updateDriverLocationRef.current = updateDriverLocation;
+  }, [updateDriverLocation]);
+
+  // Replay queued status actions when signal returns
+  useEffect(() => {
+    const replay = async () => {
+      let actions;
+      try { actions = await getQueuedActions(); } catch { return; }
+      for (const item of actions) {
+        try {
+          if (item.actionName === "updateStatus") await updateStatus(...item.args);
+          else if (item.actionName === "claimDelivery") await claimDelivery(...item.args);
+          await removeQueuedAction(item.id);
+        } catch { /* leave for next attempt */ }
+      }
+    };
+    if (navigator.onLine) replay();
+    window.addEventListener("online", replay);
+    return () => window.removeEventListener("online", replay);
+  }, [updateStatus, claimDelivery]);
+
+  // Clear optimistic overrides only when real data has caught up to or
+  // passed the optimistic status — never revert to a lower status
+  const STATUS_ORDER = { pending: 0, in_transit: 1, arrived: 2, delivered: 3 };
+  useEffect(() => {
+    setOptimisticStatus((current) => {
+      const updated = { ...current };
+      let changed = false;
+      for (const id of Object.keys(updated)) {
+        const real = deliveries.find((d) => d.id === id);
+        if (real) {
+          const realRank = STATUS_ORDER[real.status] ?? 0;
+          const optimisticRank = STATUS_ORDER[updated[id]] ?? 0;
+          if (realRank >= optimisticRank) {
+            delete updated[id];
+            changed = true;
+          }
+          // If real is LOWER than optimistic (e.g. Supabase still shows
+          // "arrived" but driver marked it "delivered" offline), keep the
+          // optimistic override so the screen doesn't revert
+        }
+      }
+      return changed ? updated : current;
+    });
+  }, [deliveries]);
+
+  // Quietly report this driver's live position while they're logged in —
+  // only works while this screen is open and the phone is unlocked.
+  //
+  // Uses an active poll (ask for a fresh position every 20s) rather than
+  // watchPosition's continuous stream — on Android's WebView, watchPosition
+  // can silently stop delivering updates after the first reading (a known
+  // OS/battery-optimization quirk), leaving the pin frozen forever. Actively
+  // re-asking on a timer sidesteps that.
+  useEffect(() => {
+    if (!driverId || !("geolocation" in navigator)) return;
+
+    const poll = () => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          updateDriverLocationRef.current(driverId, pos.coords.latitude, pos.coords.longitude);
+        },
+        (err) => console.error("Location error:", err.message),
+        { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+      );
+    };
+
+    poll(); // fire immediately, don't wait for the first interval tick
+    const intervalId = setInterval(poll, 20000);
+    return () => clearInterval(intervalId);
+  }, [driverId]);
+
+
+  if (!driverId) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingTop: 24 }}>
+        <div style={{ textAlign: "center", fontWeight: 800, fontSize: 18, marginBottom: 8 }}>
+          Who is driving today?
+        </div>
+        {drivers.map((d) => (
           <button
-            onClick={syncNow}
-            title="Refresh data"
+            key={d.id}
+            onClick={() => {
+              setDriverId(d.id);
+              tagAsDriver(d.id);
+            }}
             style={{
-              width: 44,
+              padding: "18px 0",
               borderRadius: 12,
               border: `1.5px solid ${T.line}`,
               background: T.card,
               fontSize: 17,
+              fontWeight: 800,
+              color: T.ink,
               cursor: "pointer",
               fontFamily: "inherit",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              animation: syncing ? "spin 0.6s linear" : "none",
             }}
           >
-            ↻
+            {d.name}
           </button>
-        </div>
+        ))}
+      </div>
+    );
+  }
 
-        {error && (
-          <div
-            style={{
-              background: "#FBEAE6",
-              color: T.red,
-              borderRadius: 10,
-              padding: "10px 14px",
-              fontSize: 13,
-              fontWeight: 700,
-              marginBottom: 14,
-            }}
-          >
-            ⚠ {error} — check your internet connection.
-          </div>
-        )}
+  const drv = drivers.find((d) => d.id === driverId);
+  // Helpers already riding with another driver on an unfinished delivery — hide them
+  // from the picker so two drivers can't claim the same helper at once.
+  const busyHelperIds = new Set(
+    deliveries
+      .filter((d) => d.driver_id && d.driver_id !== driverId && d.status !== "delivered")
+      .flatMap((d) => d.helper_ids || [])
+  );
+  const pickableHelpers = helpers.filter((h) => !busyHelperIds.has(h.id));
+  const available = deliveries.filter((d) => !d.driver_id && d.status === "pending");
+  const myStops = deliveries.filter((d) => d.driver_id === driverId);
+  const pending = myStops.filter((d) => d.status !== "delivered");
+  const done = myStops.filter((d) => d.status === "delivered");
+  const stop = myStops.map((d) =>
+    optimisticStatus[d.id] ? { ...d, status: optimisticStatus[d.id] } : d
+  ).find((d) => d.id === openStop);
+  const claiming = available.find((d) => d.id === claimingId);
 
-        {!isOnline && (
-          <div
-            style={{
-              background: "#3A3A32",
-              color: "#F0E9C9",
-              borderRadius: 10,
-              padding: "10px 14px",
-              fontSize: 13,
-              fontWeight: 700,
-              marginBottom: 14,
-            }}
-          >
-            📡 No signal — Start route / Arrived taps are saved and will send automatically once you're back online.
-            {pendingSync > 0 && ` (${pendingSync} waiting)`}
-          </div>
-        )}
-        {isOnline && pendingSync > 0 && (
-          <div
-            style={{
-              background: T.greenBg,
-              color: T.green,
-              borderRadius: 10,
-              padding: "10px 14px",
-              fontSize: 13,
-              fontWeight: 700,
-              marginBottom: 14,
-            }}
-          >
-            Syncing {pendingSync} saved action{pendingSync !== 1 ? "s" : ""}…
-          </div>
-        )}
+  const toggleHelper = (id) => {
+    setPickedHelpers((cur) => {
+      if (cur.includes(id)) return cur.filter((x) => x !== id);
+      if (cur.length >= 2) return cur; // capped at 2
+      return [...cur, id];
+    });
+  };
 
-        {loading ? (
-          <div style={{ textAlign: "center", color: T.mute, padding: 50 }}>Loading…</div>
-        ) : device === "admin" && !adminUnlocked ? (
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, paddingTop: 30 }}>
-            <div style={{ fontWeight: 900, fontSize: 22 }}>Admin</div>
-            <div style={{ color: T.mute, fontSize: 13, fontWeight: 600 }}>Enter PIN to continue</div>
-            <div style={{ display: "flex", gap: 10 }}>
-              {[0, 1, 2, 3].map((i) => (
-                <div
-                  key={i}
-                  style={{
-                    width: 16,
-                    height: 16,
-                    borderRadius: 99,
-                    border: `2px solid ${pinError ? T.red : T.yolkDark}`,
-                    background: pinEntry.length > i ? (pinError ? T.red : T.yolkDark) : "transparent",
-                  }}
-                />
-              ))}
+  // ---- Claiming a delivery: pick 0-2 helpers, then confirm ----
+  if (claiming) {
+    const c = customers.find((x) => x.id === claiming.customer_id);
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <Btn kind="ghost" small onClick={() => { setClaimingId(null); setPickedHelpers([]); }}>
+          ← Back
+        </Btn>
+        <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 18 }}>
+          <div style={{ fontWeight: 800, fontSize: 18 }}>{c ? c.name : "…"}</div>
+          <div style={{ fontSize: 13, color: T.mute, marginBottom: 4 }}>{c && c.area}</div>
+          {c && c.address && <div style={{ fontSize: 12, color: T.mute, marginBottom: 12 }}>📍 {c.address}</div>}
+          <div style={{ background: T.tan, borderRadius: 8, padding: "10px 12px", fontSize: 14, fontWeight: 700, marginBottom: 18 }}>
+            {fmtQty(claiming.crates_assigned, claiming.eggs_assigned)}
+            {sizesLine(claiming) && <div style={{ fontSize: 12, fontWeight: 600, color: T.mute, marginTop: 4 }}>{sizesLine(claiming)}</div>}
+            {claiming.price_due > 0 && <div style={{ fontSize: 13, fontWeight: 800, color: T.ink, marginTop: 6 }}>Price: ₦{Number(claiming.price_due).toLocaleString("en-NG")}</div>}
+          </div>
+
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+            Bringing anyone with you? (up to 2, optional)
+          </div>
+          {pickableHelpers.length === 0 ? (
+            <div style={{ fontSize: 13, color: T.mute, marginBottom: 16 }}>
+              {helpers.length === 0
+                ? "No helpers added yet — ask the Admin to add names in Manage."
+                : "Everyone's out with another driver right now."}
             </div>
-            {pinError && (
-              <div style={{ color: T.red, fontSize: 13, fontWeight: 700 }}>Wrong PIN — try again</div>
-            )}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 70px)", gap: 10, marginTop: 6 }}>
-              {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"].map((k, i) =>
-                k === "" ? (
-                  <div key={i} />
-                ) : (
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 18 }}>
+              {pickableHelpers.map((h) => {
+                const picked = pickedHelpers.includes(h.id);
+                return (
                   <button
-                    key={i}
-                    onClick={() => {
-                      setPinError(false);
-                      if (k === "⌫") {
-                        setPinEntry((p) => p.slice(0, -1));
-                        return;
-                      }
-                      const next = (pinEntry + k).slice(0, 4);
-                      setPinEntry(next);
-                      if (next.length === 4) {
-                        if (next === ADMIN_PIN) {
-                          unlockAdmin();
-                          setPinEntry("");
-                        } else {
-                          setPinError(true);
-                          setPinEntry("");
-                        }
-                      }
-                    }}
+                    key={h.id}
+                    onClick={() => toggleHelper(h.id)}
                     style={{
-                      height: 62,
-                      borderRadius: 16,
-                      border: `1.5px solid ${T.line}`,
-                      background: T.card,
-                      fontSize: 22,
-                      fontWeight: 800,
+                      padding: "9px 14px",
+                      borderRadius: 999,
+                      border: `1.5px solid ${picked ? T.ink : T.line}`,
+                      background: picked ? T.greenBg : "#fff",
                       color: T.ink,
+                      fontWeight: 700,
+                      fontSize: 13,
                       cursor: "pointer",
                       fontFamily: "inherit",
                     }}
                   >
-                    {k}
+                    {picked ? "✓ " : ""}{h.name}
                   </button>
-                )
-              )}
-            </div>
-          </div>
-        ) : device === "admin" ? (
-          <>
-            <div style={{ display: "flex", alignItems: "center", gap: 18, marginBottom: 16, borderBottom: `1.5px solid ${T.line}`, flexWrap: "wrap", position: "relative" }}>
-              {[
-                { key: "plan", label: "Plan" },
-                { key: "today", label: "Today" },
-                { key: "live", label: "Live" },
-                { key: "map", label: "Map" },
-              ].map((t) => (
-                <button
-                  key={t.key}
-                  onClick={() => { setAdminTab(t.key); setMoreOpen(false); }}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    fontFamily: "inherit",
-                    fontWeight: 800,
-                    fontSize: 14,
-                    padding: "8px 2px 10px",
-                    cursor: "pointer",
-                    color: adminTab === t.key ? T.ink : T.mute,
-                    borderBottom: adminTab === t.key ? `3px solid ${T.yolk}` : "3px solid transparent",
-                    marginBottom: -1.5,
-                  }}
-                >
-                  {t.label}
-                </button>
-              ))}
-              {(() => {
-                const moreTabs = [
-                  { key: "stock", label: "Stock" },
-                  { key: "log", label: "Log" },
-                  { key: "balances", label: "Balances" },
-                  { key: "calendar", label: "Calendar" },
-                  { key: "missing", label: "Missing" },
-                  { key: "reports", label: "Reports" },
-                  { key: "manage", label: "Manage" },
-                  { key: "attendance", label: "Warehouse Attendance" },
-                  { key: "receipts", label: "Receipts" },
-                ];
-                const activeInMore = moreTabs.find((t) => t.key === adminTab);
-                return (
-                  <div style={{ position: "relative" }}>
-                    <button
-                      onClick={() => setMoreOpen((o) => !o)}
-                      style={{
-                        background: "none",
-                        border: "none",
-                        fontFamily: "inherit",
-                        fontWeight: 800,
-                        fontSize: 14,
-                        padding: "8px 2px 10px",
-                        cursor: "pointer",
-                        color: activeInMore ? T.ink : T.mute,
-                        borderBottom: activeInMore ? `3px solid ${T.yolk}` : "3px solid transparent",
-                        marginBottom: -1.5,
-                      }}
-                    >
-                      {activeInMore ? activeInMore.label : "More"} ▾
-                    </button>
-                    {moreOpen && (
-                      <div
-                        style={{
-                          position: "absolute",
-                          top: "100%",
-                          left: 0,
-                          zIndex: 20,
-                          background: T.paper,
-                          border: `1.5px solid ${T.line}`,
-                          borderRadius: 10,
-                          boxShadow: "0 6px 18px rgba(0,0,0,0.12)",
-                          minWidth: 150,
-                          overflow: "hidden",
-                        }}
-                      >
-                        {moreTabs.map((t) => (
-                          <button
-                            key={t.key}
-                            onClick={() => { setAdminTab(t.key); setMoreOpen(false); }}
-                            style={{
-                              display: "block",
-                              width: "100%",
-                              textAlign: "left",
-                              background: adminTab === t.key ? T.tan : "none",
-                              border: "none",
-                              fontFamily: "inherit",
-                              fontWeight: 700,
-                              fontSize: 13,
-                              padding: "10px 14px",
-                              cursor: "pointer",
-                              color: T.ink,
-                            }}
-                          >
-                            {t.label}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
                 );
-              })()}
-              {adminTab === "live" && (
-                <button
-                  onClick={clearTodayData}
-                  style={{
-                    marginLeft: "auto",
-                    background: "none",
-                    border: "none",
-                    fontFamily: "inherit",
-                    fontWeight: 700,
-                    fontSize: 12,
-                    color: T.red,
-                    cursor: "pointer",
-                    padding: "8px 2px 10px",
-                  }}
-                >
-                  Clear today
-                </button>
-              )}
-              <button
-                onClick={lockAdmin}
-                style={{
-                  marginLeft: adminTab === "live" ? 0 : "auto",
-                  background: "none",
-                  border: "none",
-                  fontFamily: "inherit",
-                  fontWeight: 700,
-                  fontSize: 12,
-                  color: T.mute,
-                  cursor: "pointer",
-                  padding: "8px 2px 10px",
+              })}
+            </div>
+          )}
+
+          <Btn
+            full
+            kind="green"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                const result = await withOfflineQueue("claimDelivery", claimDelivery)(claiming.id, driverId, pickedHelpers);
+                if (result === "__queued__") {
+                  // Queued offline — optimistically add to my stops
+                  if (setDeliveries) {
+                    setDeliveries((prev) => prev.map((d) =>
+                      d.id === claiming.id ? { ...d, driver_id: driverId, helper_ids: pickedHelpers, status: "pending" } : d
+                    ));
+                  }
+                } else if (!result) {
+                  alert("Someone else just claimed this delivery. Pick another one.");
+                }
+                setClaimingId(null);
+                setPickedHelpers([]);
+              } catch {
+                alert("Could not claim — please try again.");
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? "Claiming…" : "Claim this delivery"}
+          </Btn>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Stop detail (claimed by me) ----
+  if (stop) {
+    const c = customers.find((x) => x.id === stop.customer_id);
+    const name = c ? c.name : "this customer";
+    const stopHelperNames = (stop.helper_ids || []).map((id) => (helpers.find((h) => h.id === id) || {}).name).filter(Boolean);
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <Btn kind="ghost" small onClick={() => setOpenStop(null)}>
+          ← Back to route
+        </Btn>
+        <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 18 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 18 }}>{name}</div>
+              <div style={{ fontSize: 13, color: T.mute, marginBottom: 2 }}>{c && c.area}</div>
+              {c && c.address && <div style={{ fontSize: 12, color: T.mute, marginBottom: 6 }}>📍 {c.address}</div>}
+            </div>
+            <Tag color={T.mute} bg={T.tan}>
+              {STATUS_LABEL[stop.status]}
+            </Tag>
+          </div>
+          {stopHelperNames.length > 0 && (
+            <div style={{ fontSize: 12, color: T.mute, marginBottom: 6 }}>With {stopHelperNames.join(", ")}</div>
+          )}
+          {c && c.phone && (
+            <a href={`tel:${c.phone}`} style={{ fontSize: 13, fontWeight: 700, color: T.ink }}>
+              Call {c.phone}
+            </a>
+          )}
+          <div
+            style={{
+              background: T.tan,
+              borderRadius: 8,
+              padding: "10px 12px",
+              fontSize: 14,
+              fontWeight: 700,
+              margin: "14px 0 16px",
+            }}
+          >
+            Assigned: {fmtQty(stop.crates_assigned, stop.eggs_assigned)}
+            {sizesLine(stop) && <div style={{ fontSize: 12, fontWeight: 600, color: T.mute, marginTop: 4 }}>{sizesLine(stop)}</div>}
+            {stop.price_due > 0 && <div style={{ fontSize: 13, fontWeight: 800, color: T.ink, marginTop: 6 }}>Price: ₦{Number(stop.price_due).toLocaleString("en-NG")}</div>}
+          </div>
+
+          {stop.status === "pending" && (
+            <Btn
+              full
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const result = await withOfflineQueue("updateStatus", updateStatus)(stop.id, "in_transit", { driver_id: driverId, customer_id: stop.customer_id });
+                  if (result === "__queued__") {
+                    setOptimisticStatus((s) => ({ ...s, [stop.id]: "in_transit" }));
+                  }
+                } catch {} finally { setBusy(false); }
+              }}
+            >
+              {busy ? "Starting…" : `Start route to ${name}`}
+            </Btn>
+          )}
+
+          {stop.status === "in_transit" && tick >= 0 && (() => {
+            const startedAt = stop.started_at ? new Date(stop.started_at) : null;
+            const minsElapsed = startedAt ? (Date.now() - startedAt.getTime()) / 60000 : 999;
+            const locked = minsElapsed < 2;
+            const secsLeft = locked ? Math.ceil((2 - minsElapsed) * 60) : 0;
+            return (
+              <Btn
+                full
+                disabled={busy || locked}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    const result = await withOfflineQueue("updateStatus", updateStatus)(stop.id, "arrived", { driver_id: driverId, customer_id: stop.customer_id });
+                    if (result === "__queued__") {
+                      setOptimisticStatus((s) => ({ ...s, [stop.id]: "arrived" }));
+                    }
+                  } catch {} finally { setBusy(false); }
                 }}
               >
-                Lock
-              </button>
-            </div>
-            {adminTab === "plan" ? (
-              <AdminPlan
-                drivers={drivers}
-                customers={customers}
-                helpers={helpers}
-                deliveries={deliveries}
-                addDelivery={addDelivery}
-                removeDelivery={removeDelivery}
-                availableStock={
-                  stockEntries.reduce((s, e) => s + Number(e.amount || 0), 0) -
-                  allDeliveriesForStock.reduce((s, d) => s + Number(d.crates_assigned || 0), 0)
-                }
-              />
-            ) : adminTab === "live" ? (
-              <AdminDashboard
-                drivers={drivers}
-                customers={customers}
-                helpers={helpers}
-                deliveries={deliveries}
-                driverLocations={driverLocations}
-                onHide={hideDelivery}
-                onPostpone={postponeDelivery}
-                onUnhide={unhideDelivery}
-              />
-            ) : adminTab === "map" ? (
-              <AdminMap drivers={drivers} customers={customers} driverLocations={driverLocations} deliveries={deliveries} geocodeCustomer={geocodeCustomer} />
-            ) : adminTab === "stock" ? (
-              <AdminStock stockEntries={stockEntries} deliveries={allDeliveriesForStock} addStockEntry={addStockEntry} drivers={drivers} stockCounts={stockCounts} />
-            ) : adminTab === "log" ? (
-              <ActivityLogTable events={events} drivers={drivers} customers={customers} showAccount={true} />
-            ) : adminTab === "balances" ? (
-              <AdminBalances customers={customers} allDeliveries={allDeliveriesForStock} customerPayments={customerPayments} recordPayment={recordPayment} />
-            ) : adminTab === "calendar" ? (
-              <AdminCalendar customers={customers} allDeliveries={allDeliveriesForStock} />
-            ) : adminTab === "today" ? (
-              <AdminDayList drivers={drivers} customers={customers} helpers={helpers} deliveries={deliveries} hiddenDeliveries={hiddenDeliveries} onHide={hideDelivery} onPostpone={postponeDelivery} onUnhide={unhideDelivery} />
-            ) : adminTab === "missing" ? (
-              <AdminMissingCrates
-                customers={customers}
-                drivers={drivers}
-                openDebts={openDebts}
-                collectMissingCrates={collectMissingCrates}
-                allDeliveries={allDeliveriesForStock}
-                collectEmptyCrates={collectEmptyCrates}
-              />
-            ) : adminTab === "reports" ? (
-              <AdminReports drivers={drivers} customers={customers} helpers={helpers} />
-            ) : adminTab === "attendance" ? (
-              <AdminWarehouseAttendance />
-            ) : adminTab === "receipts" ? (
-              <AdminReceipts customers={customers} deliveries={allDeliveriesForStock} />
-            ) : (
-              <AdminManage
-                drivers={drivers}
-                customers={customers}
-                helpers={helpers}
-                addDriver={addDriver}
-                deactivateDriver={deactivateDriver}
-                addCustomer={addCustomer}
-                deactivateCustomer={deactivateCustomer}
-                addHelper={addHelper}
-                deactivateHelper={deactivateHelper}
-              />
-            )}
-          </>
-        ) : (
-          <DriverApp
-            drivers={drivers}
-            customers={customers}
-            helpers={helpers}
-            deliveries={deliveries}
-            setDeliveries={setDeliveries}
-            openDebts={openDebts}
-            claimDelivery={claimDelivery}
-            unclaimDelivery={unclaimDelivery}
-            updateStatus={updateStatus}
-            submitPartialDelivery={submitPartialDelivery}
-            markDelivered={markDelivered}
-            resolveMissingCrates={resolveMissingCrates}
-            collectMissingCrates={collectMissingCrates}
-            collectEmptyCrates={collectEmptyCrates}
-            updateDriverLocation={updateDriverLocation}
-            addStockCount={addStockCount}
-            stockCounts={stockCounts}
-            availableStock={
-              stockEntries.reduce((s, e) => s + Number(e.amount || 0), 0) -
-              allDeliveriesForStock.reduce((s, d) => s + Number(d.crates_assigned || 0), 0)
-            }
-            allDeliveries={allDeliveriesForStock}
-          />
-        )}
+                {busy ? "Updating…" : locked ? `Arrived at customer's location (wait ${secsLeft}s)` : "Arrived at customer's location"}
+              </Btn>
+            );
+          })()}
+
+          {stop.status === "arrived" && (() => {
+            const alreadyDelivered = stop.crates_delivered || 0;
+            const remaining = Math.max(0, stop.crates_assigned - alreadyDelivered);
+            const thisVisit = dc === "" ? 0 : Number(dc);
+            const projectedTotal = alreadyDelivered + thisVisit;
+            const isFinalVisit = projectedTotal >= stop.crates_assigned && thisVisit > 0;
+            const receiptRequired = !c || c.requires_receipt !== false;
+
+            return (
+              <>
+                {alreadyDelivered > 0 && (
+                  <div style={{ background: T.tan, borderRadius: 8, padding: "8px 12px", fontSize: 13, fontWeight: 700, marginBottom: 12 }}>
+                    Already dropped off: {alreadyDelivered} of {stop.crates_assigned} crates
+                  </div>
+                )}
+
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+                  Crates of egg delivered
+                  <span style={{ color: T.mute, fontWeight: 600 }}> (max {remaining})</span>
+                </div>
+                <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+                  <NumInput
+                    label="Crates this trip"
+                    value={dc}
+                    onChange={(v) => {
+                      if (v === "") return setDc("");
+                      const n = Number(v);
+                      setDc(n > remaining ? String(remaining) : v);
+                    }}
+                    width={120}
+                  />
+                  <NumInput label="Extra delivered" value={extraDelivered} onChange={setExtraDelivered} width={120} decimal fractions />
+                </div>
+
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Empty crate exchange at this stop</div>
+                <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+                  <NumInput label="Picked up" value={emptyPickedUp} onChange={setEmptyPickedUp} width={110} />
+                  <NumInput label="Left with customer" value={emptyLeft} onChange={setEmptyLeft} width={140} />
+                </div>
+
+                <div style={{ marginBottom: 18 }}>
+                  <MediaCapture
+                    photos={stopPhotos}
+                    onAddPhoto={(url) => setStopPhotos((p) => [...p, url])}
+                    onRemovePhoto={(i) => setStopPhotos((p) => p.filter((_, idx) => idx !== i))}
+                    video={null}
+                    onSetVideo={() => {}}
+                    onRemoveVideo={() => {}}
+                    upload={uploadPhoto}
+                    maxPhotos={5}
+                    label="Photos at this stop (at least 1 required)"
+                  />
+                  {stopPhotos.some((u) => u && u.startsWith("pending://")) && (
+                    <div style={{ fontSize: 12, color: "#b07800", fontWeight: 600, marginTop: 6 }}>
+                      📲 Saved to device — will upload automatically when signal returns
+                    </div>
+                  )}
+                </div>
+
+                {!isFinalVisit && thisVisit > 0 && (
+                  <div style={{ fontSize: 12, color: T.mute, marginBottom: 12 }}>
+                    That leaves {stop.crates_assigned - projectedTotal} crates still to bring — this will be saved as a partial drop-off. No signature needed yet.
+                  </div>
+                )}
+
+                {isFinalVisit && (
+                  <>
+                    <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+                      <NumInput label="Returned Cracked" value={missingCrates} onChange={setMissingCrates} width={120} />
+                      <NumInput label="Crates owed to customer (short of eggs)" value={backorderCrates} onChange={setBackorderCrates} width={220} />
+                    </div>
+
+                    <div style={{ marginBottom: 16 }}>
+                      {/* payment removed from driver form */}
+                    </div>
+
+                    {receiptRequired && (
+                      <div style={{ marginBottom: 18 }}>
+                        <MediaCapture
+                          photos={receiptPhotos}
+                          onAddPhoto={(url) => setReceiptPhotos((p) => [...p, url])}
+                          onRemovePhoto={(i) => setReceiptPhotos((p) => p.filter((_, idx) => idx !== i))}
+                          video={null}
+                          onSetVideo={() => {}}
+                          onRemoveVideo={() => {}}
+                          upload={uploadPhoto}
+                          maxPhotos={5}
+                          label="Receipt photos (1 required, up to 5)"
+                        />
+                        {receiptPhotos.some((u) => u && u.startsWith("pending://")) && (
+                          <div style={{ fontSize: 12, color: "#b07800", fontWeight: 600, marginTop: 6 }}>
+                            📲 Saved to device — will upload automatically when signal returns
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div style={{ marginBottom: 18 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Customer signature</div>
+                      {signatureSkipped ? (
+                        <div style={{ fontSize: 13, color: T.mute, fontWeight: 600 }}>
+                          Skipped — customer not available.{" "}
+                          <button
+                            onClick={() => setSignatureSkipped(false)}
+                            style={{ background: "none", border: "none", color: T.ink, fontWeight: 700, textDecoration: "underline", cursor: "pointer", fontFamily: "inherit", padding: 0 }}
+                          >
+                            Undo
+                          </button>
+                        </div>
+                      ) : signatureUrl ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                          {signatureUrl.startsWith("pending://") ? (
+                            <div style={{ fontSize: 12, color: "#b07800", fontWeight: 600 }}>
+                              ✍️ Signature saved to device — will upload when signal returns
+                            </div>
+                          ) : (
+                            <img src={signatureUrl} alt="customer signature" style={{ width: 110, height: 46, objectFit: "contain", background: "#fff", border: `1.5px solid ${T.line}`, borderRadius: 6 }} />
+                          )}
+                          <Btn kind="ghost" small onClick={() => setSignatureUrl(null)}>
+                            Redo
+                          </Btn>
+                        </div>
+                      ) : (
+                        <>
+                          <SignaturePad upload={uploadPhoto} onCapture={setSignatureUrl} />
+                          <button
+                            onClick={() => setSignatureSkipped(true)}
+                            style={{ marginTop: 8, background: "none", border: "none", color: T.mute, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}
+                          >
+                            Customer not available to sign
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </>
+                )}
+
+                <Btn
+                  full
+                  kind="green"
+                  disabled={
+                    busy ||
+                    thisVisit <= 0 ||
+                    stopPhotos.length === 0 ||
+                    (isFinalVisit && ((receiptRequired && receiptPhotos.length === 0) || (!signatureUrl && !signatureSkipped)))
+                  }
+                  onClick={async () => {
+                    setBusy(true);
+                    const crateExchange = {
+                      extra: extraDelivered === "" ? 0 : Number(extraDelivered),
+                      backorder: backorderCrates === "" ? 0 : Number(backorderCrates),
+                      emptyPickedUp: emptyPickedUp === "" ? 0 : Number(emptyPickedUp),
+                      emptyLeft: emptyLeft === "" ? 0 : Number(emptyLeft),
+                    };
+                    try {
+                      if (isFinalVisit) {
+                        await markDelivered(
+                          stop.id,
+                          thisVisit,
+                          stopPhotos,
+                          stopVideo,
+                          missingEggs === "" ? 0 : Number(missingEggs),
+                          missingCrates === "" ? 0 : Number(missingCrates),
+                          signatureUrl,
+                          { bigLarge: 0, smallLarge: 0, medium: 0, pullet: 0 },
+                          payment === "" ? 0 : Number(payment),
+                          receiptPhotos[0] || null,
+                          crateExchange,
+                          { driver_id: driverId, customer_id: stop.customer_id }
+                        );
+                      } else {
+                        await submitPartialDelivery(stop.id, thisVisit, stopPhotos, stopVideo, crateExchange, {
+                          driver_id: driverId,
+                          customer_id: stop.customer_id,
+                        });
+                      }
+                    } catch (e) {
+                      console.warn("Submit failed:", e.message);
+                      // Even if save failed (offline), optimistically mark as delivered
+                      // so driver can move to the next stop. Queue replays on reconnect.
+                      if (isFinalVisit) {
+                        setOptimisticStatus((s) => ({ ...s, [stop.id]: "delivered" }));
+                      }
+                    } finally {
+                      setBusy(false);
+                      setOpenStop(null);
+                      setDc("");
+                      setExtraDelivered("");
+                      setEmptyPickedUp("");
+                      setEmptyLeft("");
+                      setStopPhotos([]);
+                      setStopVideo(null);
+                      setMissingEggs("");
+                      setMissingCrates("");
+                      setBackorderCrates("");
+                      setSignatureUrl(null);
+                      setSignatureSkipped(false);
+                      setPayment("");
+                      setReceiptPhotos([]);
+                    }
+                  }}
+                >
+                  {busy ? "Saving…" : isFinalVisit ? "✓ Mark delivered" : "Save partial delivery"}
+                </Btn>
+                {thisVisit <= 0 && (
+                  <div style={{ fontSize: 12, color: T.mute, textAlign: "center", marginTop: 8 }}>
+                    Enter how many crates you're dropping off this trip
+                  </div>
+                )}
+              </>
+            );
+          })()}
+        </div>
       </div>
+    );
+  }
+
+  // ---- Main screen: available pool + my claimed route ----
+  const crateIssues = (() => {
+    const byCustomer = {};
+    openDebts
+      .forEach((d) => {
+        const key = d.customer_id;
+        if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, owedDeliveryIds: [], backorder: 0, emptyLeft: 0, emptyLeftDate: null, emptyLeftDeliveryId: null };
+        byCustomer[key].owed += Number(d.missing_crates || 0);
+        byCustomer[key].owedDeliveryIds.push(d.id);
+      });
+    (allDeliveries || [])
+      .forEach((d) => {
+        const key = d.customer_id;
+        if (Number(d.backorder_crates || 0) > 0) {
+          if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, owedDeliveryIds: [], backorder: 0, emptyLeft: 0, emptyLeftDate: null, emptyLeftDeliveryId: null };
+          byCustomer[key].backorder += Number(d.backorder_crates);
+        }
+        if (Number(d.empty_crates_left || 0) > 0) {
+          if (!byCustomer[key]) byCustomer[key] = { customerId: key, owed: 0, owedDeliveryIds: [], backorder: 0, emptyLeft: 0, emptyLeftDate: null, emptyLeftDeliveryId: null };
+          // keep only the most recent stop's snapshot for this customer
+          if (!byCustomer[key].emptyLeftDate || d.delivery_date > byCustomer[key].emptyLeftDate) {
+            byCustomer[key].emptyLeft = Number(d.empty_crates_left);
+            byCustomer[key].emptyLeftDate = d.delivery_date;
+            byCustomer[key].emptyLeftDeliveryId = d.id;
+          }
+        }
+      });
+    return Object.values(byCustomer)
+      .map((c) => ({ ...c, name: (customers.find((x) => x.id === c.customerId) || {}).name || "a customer" }))
+      .filter((c) => c.owed > 0 || c.backorder > 0 || c.emptyLeft > 0);
+  })();
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {offlineToast && (
+        <div style={{
+          background: "#1a2a0a", color: "#c8f080", fontSize: 13, fontWeight: 600,
+          padding: "10px 14px", borderRadius: 10,
+        }}>
+          {offlineToast}
+        </div>
+      )}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontWeight: 800, fontSize: 17 }}>{drv ? drv.name : ""}</div>
+        <Btn kind="ghost" small onClick={() => setDriverId(null)}>
+          Switch
+        </Btn>
+      </div>
+
+      {crateIssues.length > 0 && (
+        <div style={{ background: "#FBEAE6", border: `1.5px solid ${T.red}`, borderRadius: 12, padding: "12px 14px" }}>
+          <div style={{ fontWeight: 800, color: T.red, fontSize: 14, marginBottom: 6 }}>⚠ Crates owed / missing</div>
+          {crateIssues.map((c) => (
+            <div key={c.customerId} style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 13, color: T.red, fontWeight: 600, marginBottom: 6 }}>
+                {c.name}
+                {c.owed > 0 && ` · ${c.owed} crate${c.owed !== 1 ? "s" : ""} owed back`}
+                {c.backorder > 0 && ` · ${c.backorder} backordered`}
+                {c.emptyLeft > 0 && ` · ${c.emptyLeft} empty crate${c.emptyLeft !== 1 ? "s" : ""} left`}
+              </div>
+              {c.owed > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: c.emptyLeft > 0 ? 8 : 0 }}>
+                  {openDebts
+                    .filter((debt) => c.owedDeliveryIds.includes(debt.id))
+                    .map((debt) => renderDebtCard(debt, busy, setBusy, "missing"))}
+                </div>
+              )}
+              {c.emptyLeft > 0 &&
+                renderDebtCard({ id: c.emptyLeftDeliveryId, customer_id: c.customerId, empty_crates_left: c.emptyLeft }, busy, setBusy, "empty")}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Available pool */}
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: T.mute, marginBottom: 8 }}>
+          Available deliveries ({available.length})
+        </div>
+        {available.length === 0 && (
+          <div style={{ textAlign: "center", color: T.mute, fontSize: 14, padding: 20, background: T.card, borderRadius: 12, border: `1.5px solid ${T.line}` }}>
+            Nothing to claim right now.
+          </div>
+        )}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {available.map((d) => {
+            const c = customers.find((x) => x.id === d.customer_id);
+            return (
+              <button
+                key={d.id}
+                onClick={() => setClaimingId(d.id)}
+                style={{
+                  textAlign: "left",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "14px 16px",
+                  borderRadius: 12,
+                  border: `1.5px dashed ${T.yolkDark}`,
+                  background: "#F5FBE6",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  width: "100%",
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 15, color: T.ink }}>{c ? c.name : "…"}</div>
+                  <div style={{ fontSize: 13, color: T.mute }}>
+                    {c && c.area ? `${c.area} · ` : ""}
+                    {fmtQty(d.crates_assigned, d.eggs_assigned)}
+                  </div>
+                </div>
+                <div style={{ fontWeight: 800, fontSize: 13, color: T.ink }}>Claim →</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* My route */}
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: T.mute, marginBottom: 8 }}>
+          My route ({done.length}/{myStops.length})
+        </div>
+
+        {myStops.length === 0 && (
+          <div style={{ textAlign: "center", color: T.mute, fontSize: 14, padding: 20 }}>
+            You haven't claimed any deliveries yet.
+          </div>
+        )}
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {myStops.map((d) => {
+            const c = customers.find((x) => x.id === d.customer_id);
+            const isDone = d.status === "delivered";
+            const canReturn = d.status === "pending" && (d.crates_delivered || 0) === 0;
+            const helperNames = (d.helper_ids || []).map((id) => (helpers.find((h) => h.id === id) || {}).name).filter(Boolean);
+            return (
+              <div
+                key={d.id}
+                style={{
+                  borderRadius: 12,
+                  border: `1.5px solid ${isDone ? T.green : T.line}`,
+                  background: isDone ? T.greenBg : T.card,
+                  overflow: "hidden",
+                }}
+              >
+                <button
+                  onClick={() => {
+                    if (!isDone) {
+                      setOpenStop(d.id);
+                      setDc("");
+                      setExtraDelivered("");
+                      setEmptyPickedUp("");
+                      setEmptyLeft("");
+                      setBackorderCrates("");
+                      setStopPhotos([]);
+                      setStopVideo(null);
+                    }
+                  }}
+                  style={{
+                    textAlign: "left",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    padding: "14px 16px",
+                    border: "none",
+                    background: "none",
+                    cursor: isDone ? "default" : "pointer",
+                    fontFamily: "inherit",
+                    width: "100%",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 15, color: T.ink }}>{c ? c.name : "…"}</div>
+                    <div style={{ fontSize: 13, color: T.mute }}>
+                      {c && c.area ? `${c.area} · ` : ""}
+                      {fmtQty(d.crates_assigned, d.eggs_assigned)}
+                      {!isDone && ` · ${STATUS_LABEL[d.status]}`}
+                      {helperNames.length > 0 && ` · with ${helperNames.join(", ")}`}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 22 }}>{isDone ? "✅" : d.status === "arrived" ? "📍" : d.status === "in_transit" ? "🚐" : "○"}</div>
+                </button>
+                {canReturn && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (window.confirm(`Return this delivery to ${c ? c.name : "the customer"} back to the pool? Any other driver can claim it.`)) {
+                        unclaimDelivery(d.id, driverId);
+                      }
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "8px 16px",
+                      border: "none",
+                      borderTop: `1px solid ${T.line}`,
+                      background: T.tan,
+                      color: T.mute,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    ↩ Claimed by accident? Return this delivery
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {myStops.length > 0 && pending.length === 0 && (() => {
+          const totalPickedUp = myStops.reduce((s, d) => s + Number(d.empty_crates_picked_up || 0), 0);
+          const totalLeft = myStops.reduce((s, d) => s + Number(d.empty_crates_left || 0), 0);
+          return (
+            <div
+              style={{
+                background: T.greenBg,
+                border: `1.5px solid ${T.green}`,
+                borderRadius: 12,
+                padding: 16,
+                textAlign: "center",
+                marginTop: 10,
+              }}
+            >
+              <div style={{ fontWeight: 800, color: T.green, marginBottom: 4 }}>All stops done ✓</div>
+              <div style={{ fontSize: 13, color: T.mute }}>
+                Empty crates picked up today: <b>{totalPickedUp}</b>
+                {totalLeft > 0 && (
+                  <>
+                    {" · "}
+                    <span style={{ color: T.red, fontWeight: 700 }}>{totalLeft} still left with customers</span>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+
+      {/* Missing crates owed by customers — company-wide, any driver can collect */}
+      {(() => {
+        const allDebts = openDebts;
+        if (allDebts.length === 0) return null;
+        return (
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: T.mute, marginBottom: 8 }}>
+              Crates still owed by customers ({allDebts.length})
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {allDebts.map((debt) => renderDebtCard(debt, busy, setBusy))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Warehouse counts — morning (start of shift) and evening (end of
+          shift), each shared across all drivers, once per day per type */}
+      {["morning", "evening"].map((type) => {
+        const todayStr = new Date().toLocaleDateString("en-CA");
+        const todayCount = (stockCounts || []).find((c) => c.work_date === todayStr && c.count_type === type);
+        const label = type === "morning" ? "morning" : "end of shift";
+        const question =
+          type === "morning"
+            ? "How many are left in the warehouse right now, before deliveries go out?"
+            : "How many are left in the warehouse now that the shift is ending?";
+
+        if (todayCount) {
+          const who = (drivers.find((d) => d.id === todayCount.driver_id) || {}).name || "A driver";
+          return (
+            <div key={type} style={{ background: T.tan, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 14, opacity: 0.75 }}>
+              <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4, color: T.mute }}>
+                {type === "morning" ? "Morning" : "End of shift"} count — done ✓
+              </div>
+              <div style={{ fontSize: 13, color: T.mute }}>
+                {who} reported at{" "}
+                {new Date(todayCount.created_at).toLocaleTimeString("en-NG", { hour: "2-digit", minute: "2-digit" })}
+              </div>
+              <div style={{ fontSize: 13, marginTop: 4 }}>
+                Small: <b>{todayCount.amount_small ?? "—"}</b> · Medium: <b>{todayCount.amount_medium ?? "—"}</b> · Large: <b>{todayCount.amount_large ?? "—"}</b>
+              </div>
+              {todayCount.photo_url && (
+                <a href={todayCount.photo_url} target="_blank" rel="noreferrer">
+                  <img
+                    src={todayCount.photo_url}
+                    alt="warehouse proof"
+                    style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}`, marginTop: 8 }}
+                  />
+                </a>
+              )}
+              {todayCount.video_url && (
+                <div style={{ marginTop: 6 }}>
+                  <a href={todayCount.video_url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: T.ink, textDecoration: "underline" }}>
+                    🎥 View proof video
+                  </a>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        const s = stockForm[type];
+        const setField = (field, value) => setStockForm((prev) => ({ ...prev, [type]: { ...prev[type], [field]: value } }));
+        const filled = s.small !== "" && s.medium !== "" && s.large !== "" && s.photo;
+
+        return (
+          <div key={type} style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 14 }}>
+            <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>Report {label} warehouse count</div>
+            <div style={{ fontSize: 12, color: T.mute, marginBottom: 10 }}>{question} A photo and video are both required as proof.</div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+              <NumInput label="Small" value={s.small} onChange={(v) => setField("small", v)} width={90} />
+              <NumInput label="Medium" value={s.medium} onChange={(v) => setField("medium", v)} width={90} />
+              <NumInput label="Large" value={s.large} onChange={(v) => setField("large", v)} width={90} />
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <MediaCapture
+                photos={s.photo ? [s.photo] : []}
+                onAddPhoto={(url) => setField("photo", url)}
+                onRemovePhoto={() => setField("photo", null)}
+                video={s.video}
+                onSetVideo={(url) => setField("video", url)}
+                onRemoveVideo={() => setField("video", null)}
+                upload={uploadPhoto}
+                maxPhotos={1}
+                label="Photo and video proof (both required)"
+              />
+            </div>
+            <Btn
+              small
+              full
+              onClick={async () => {
+                if (!filled) return;
+                setStockBusy(true);
+                await addStockCount(driverId, type, Number(s.small), Number(s.medium), Number(s.large), s.photo, s.video);
+                setStockBusy(false);
+                setStockForm((prev) => ({ ...prev, [type]: { small: "", medium: "", large: "", photo: null, video: null } }));
+              }}
+              disabled={stockBusy || !filled}
+            >
+              {stockBusy ? "Saving…" : "Submit count"}
+            </Btn>
+          </div>
+        );
+      })}
     </div>
   );
 }
