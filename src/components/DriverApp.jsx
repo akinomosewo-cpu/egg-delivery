@@ -388,15 +388,24 @@ export default function DriverApp({
             disabled={busy}
             onClick={async () => {
               setBusy(true);
-              const ok = await claimDelivery(claiming.id, driverId, pickedHelpers);
-              setBusy(false);
-              if (ok) {
+              try {
+                const result = await withOfflineQueue("claimDelivery", claimDelivery)(claiming.id, driverId, pickedHelpers);
+                if (result === "__queued__") {
+                  // Queued offline — optimistically add to my stops
+                  if (setDeliveries) {
+                    setDeliveries((prev) => prev.map((d) =>
+                      d.id === claiming.id ? { ...d, driver_id: driverId, helper_ids: pickedHelpers, status: "pending" } : d
+                    ));
+                  }
+                } else if (!result) {
+                  alert("Someone else just claimed this delivery. Pick another one.");
+                }
                 setClaimingId(null);
                 setPickedHelpers([]);
-              } else {
-                alert("Someone else just claimed this delivery. Pick another one.");
-                setClaimingId(null);
-                setPickedHelpers([]);
+              } catch {
+                alert("Could not claim — please try again.");
+              } finally {
+                setBusy(false);
               }
             }}
           >
