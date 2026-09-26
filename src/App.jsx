@@ -339,22 +339,8 @@ export default function App() {
   };
 
   const updateStatus = async (id, status, ctx) => {
-    if (!navigator.onLine) {
-      await queueAction("updateStatus", [id, status, ctx]);
-      setPendingSync((n) => n + 1);
-      return;
-    }
-    try {
-      await runUpdateStatus(id, status, ctx);
-      loadAll();
-    } catch (e) {
-      if (looksOffline(e)) {
-        await queueAction("updateStatus", [id, status, ctx]);
-        setPendingSync((n) => n + 1);
-      } else {
-        alert("Could not update: " + e.message);
-      }
-    }
+    await runUpdateStatus(id, status, ctx);
+    loadAll();
   };
 
   // Save a partial drop-off (driver couldn't carry the full order in one trip).
