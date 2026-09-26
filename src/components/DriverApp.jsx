@@ -27,6 +27,7 @@ export default function DriverApp({
   customers,
   helpers,
   deliveries,
+  setDeliveries,
   openDebts,
   allDeliveries,
   claimDelivery,
@@ -61,6 +62,9 @@ export default function DriverApp({
   const [receiptPhotos, setReceiptPhotos] = useState([]);
   const [busy, setBusy] = useState(false);
   const [offlineToast, setOfflineToast] = useState(null);
+  // Tracks status updates made while offline so the UI can show the correct
+  // state immediately without waiting for Supabase to confirm the change.
+  const [optimisticStatus, setOptimisticStatus] = useState({});
 
   const showOfflineToast = useCallback((msg) => {
     setOfflineToast(msg);
@@ -75,13 +79,25 @@ export default function DriverApp({
         } catch (err) {
           if (looksOffline(err)) {
             await queueAction(actionName, args);
+            // Optimistically update local delivery state so the driver can
+            // continue the delivery flow without waiting for real signal.
+            if (actionName === "updateStatus" && setDeliveries) {
+              const [deliveryId, newStatus] = args;
+              setDeliveries((prev) =>
+                prev.map((d) =>
+                  d.id === deliveryId
+                    ? { ...d, status: newStatus, ...(newStatus === "in_transit" ? { started_at: new Date().toISOString() } : newStatus === "arrived" ? { arrived_at: new Date().toISOString() } : {}) }
+                    : d
+                )
+              );
+            }
             showOfflineToast("📡 No signal — action saved and will sync automatically when you're back online.");
             return "__queued__";
           }
           throw err;
         }
       },
-    [showOfflineToast]
+    [showOfflineToast, setDeliveries]
   );
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -211,6 +227,22 @@ export default function DriverApp({
     return () => window.removeEventListener("online", replay);
   }, [updateStatus, claimDelivery]);
 
+  // Clear optimistic overrides once the real data from Supabase catches up
+  useEffect(() => {
+    setOptimisticStatus((current) => {
+      const updated = { ...current };
+      let changed = false;
+      for (const id of Object.keys(updated)) {
+        const real = deliveries.find((d) => d.id === id);
+        if (real && real.status === updated[id]) {
+          delete updated[id];
+          changed = true;
+        }
+      }
+      return changed ? updated : current;
+    });
+  }, [deliveries]);
+
   // Quietly report this driver's live position while they're logged in —
   // only works while this screen is open and the phone is unlocked.
   //
@@ -283,7 +315,9 @@ export default function DriverApp({
   const myStops = deliveries.filter((d) => d.driver_id === driverId);
   const pending = myStops.filter((d) => d.status !== "delivered");
   const done = myStops.filter((d) => d.status === "delivered");
-  const stop = myStops.find((d) => d.id === openStop);
+  const stop = myStops.map((d) =>
+    optimisticStatus[d.id] ? { ...d, status: optimisticStatus[d.id] } : d
+  ).find((d) => d.id === openStop);
   const claiming = available.find((d) => d.id === claimingId);
 
   const toggleHelper = (id) => {
@@ -425,7 +459,10 @@ export default function DriverApp({
               onClick={async () => {
                 setBusy(true);
                 try {
-                  await withOfflineQueue("updateStatus", updateStatus)(stop.id, "in_transit", { driver_id: driverId, customer_id: stop.customer_id });
+                  const result = await withOfflineQueue("updateStatus", updateStatus)(stop.id, "in_transit", { driver_id: driverId, customer_id: stop.customer_id });
+                  if (result === "__queued__") {
+                    setOptimisticStatus((s) => ({ ...s, [stop.id]: "in_transit" }));
+                  }
                 } catch {} finally { setBusy(false); }
               }}
             >
@@ -445,7 +482,10 @@ export default function DriverApp({
                 onClick={async () => {
                   setBusy(true);
                   try {
-                    await withOfflineQueue("updateStatus", updateStatus)(stop.id, "arrived", { driver_id: driverId, customer_id: stop.customer_id });
+                    const result = await withOfflineQueue("updateStatus", updateStatus)(stop.id, "arrived", { driver_id: driverId, customer_id: stop.customer_id });
+                    if (result === "__queued__") {
+                      setOptimisticStatus((s) => ({ ...s, [stop.id]: "arrived" }));
+                    }
                   } catch {} finally { setBusy(false); }
                 }}
               >

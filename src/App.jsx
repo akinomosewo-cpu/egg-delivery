@@ -951,6 +951,7 @@ export default function App() {
             customers={customers}
             helpers={helpers}
             deliveries={deliveries}
+            setDeliveries={setDeliveries}
             openDebts={openDebts}
             claimDelivery={claimDelivery}
             unclaimDelivery={unclaimDelivery}
