@@ -9,8 +9,12 @@ export default function AdminStock({ stockEntries, deliveries, addStockEntry, cl
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Only count today's deliveries against stock — all-time would accumulate
+  // indefinitely since stock_entries resets daily at midnight
+  const todayStr = new Date().toLocaleDateString("en-CA");
+  const todaysDeliveries = deliveries.filter((d) => d.delivery_date === todayStr);
   const totalAdded = stockEntries.reduce((s, e) => s + Number(e.amount || 0), 0);
-  const totalCommitted = deliveries.reduce((s, d) => s + Number(d.crates_assigned || 0), 0);
+  const totalCommitted = todaysDeliveries.reduce((s, d) => s + Number(d.crates_assigned || 0), 0);
   const available = totalAdded - totalCommitted;
 
   const submit = async () => {
@@ -39,7 +43,7 @@ export default function AdminStock({ stockEntries, deliveries, addStockEntry, cl
           {available} crates
         </div>
         <div style={{ fontSize: 11, color: "#8A8A80", marginTop: 4 }}>
-          {totalAdded} added all-time · {totalCommitted} committed to deliveries
+          {totalAdded} added today · {totalCommitted} committed to today's deliveries
         </div>
         <button
           onClick={clearStockEntries}
