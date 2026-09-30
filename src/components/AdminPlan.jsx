@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { T, Btn, Tag, NumInput, fmtQty } from "./ui";
 
-export default function AdminPlan({ drivers, customers, helpers, deliveries, addDelivery, removeDelivery, availableStock }) {
+export default function AdminPlan({ drivers, customers, helpers, deliveries, addDelivery, removeDelivery, updateDelivery, availableStock }) {
   const [search, setSearch] = useState("");
   const [customerId, setCustomerId] = useState(null);
   const todayStr = new Date().toLocaleDateString("en-CA");
@@ -16,6 +16,33 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
   const [priceMedium, setPriceMedium] = useState("");
   const [pricePullet, setPricePullet] = useState("");
   const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+
+  const startEdit = (d) => {
+    setEditingId(d.id);
+    setCustomerId(d.customer_id);
+    setDeliveryDate(d.delivery_date || todayStr);
+    setBigLarge(d.big_large_assigned ? String(d.big_large_assigned) : "");
+    setSmallLarge(d.small_large_assigned ? String(d.small_large_assigned) : "");
+    setMedium(d.medium_assigned ? String(d.medium_assigned) : "");
+    setPullet(d.pullet_assigned ? String(d.pullet_assigned) : "");
+    setExtra(d.extra_assigned ? String(d.extra_assigned) : "");
+    // Reverse-calculate price per crate from total
+    setPriceBigLarge(d.big_large_assigned && d.price_due ? "" : "");
+    setPriceSmallLarge("");
+    setPriceMedium("");
+    setPricePullet("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setCustomerId(null);
+    setSearch("");
+    setDeliveryDate(todayStr);
+    setBigLarge(""); setSmallLarge(""); setMedium(""); setPullet(""); setExtra("");
+    setPriceBigLarge(""); setPriceSmallLarge(""); setPriceMedium(""); setPricePullet("");
+  };
 
   const matches = search
     ? customers.filter(
@@ -41,7 +68,7 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
   const submit = async () => {
     if (!chosen || crates === 0) return;
     setSaving(true);
-    await addDelivery({
+    const row = {
       customer_id: chosen.id,
       crates_assigned: crates,
       eggs_assigned: 0,
@@ -52,20 +79,19 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
       extra_assigned: Number(extra) || 0,
       price_due: totalPrice,
       delivery_date: deliveryDate,
-    });
+    };
+    if (editingId) {
+      await updateDelivery(editingId, row);
+      setEditingId(null);
+    } else {
+      await addDelivery(row);
+    }
     setSaving(false);
     setSearch("");
     setCustomerId(null);
     setDeliveryDate(todayStr);
-    setBigLarge("");
-    setSmallLarge("");
-    setMedium("");
-    setPullet("");
-    setExtra("");
-    setPriceBigLarge("");
-    setPriceSmallLarge("");
-    setPriceMedium("");
-    setPricePullet("");
+    setBigLarge(""); setSmallLarge(""); setMedium(""); setPullet(""); setExtra("");
+    setPriceBigLarge(""); setPriceSmallLarge(""); setPriceMedium(""); setPricePullet("");
   };
 
   return (
@@ -88,10 +114,15 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
       </div>
 
       <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 16 }}>
-        <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>Post a delivery</div>
+        <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>{editingId ? "Edit delivery" : "Post a delivery"}</div>
         <div style={{ fontSize: 12, color: T.mute, marginBottom: 12, fontWeight: 600 }}>
-          Any driver can claim it from their app — no need to assign one here.
+          {editingId ? "Update the quantities, price, or date below." : "Any driver can claim it from their app — no need to assign one here."}
         </div>
+        {editingId && (
+          <Btn kind="ghost" small onClick={cancelEdit} style={{ marginBottom: 10 }}>
+            ✕ Cancel edit
+          </Btn>
+        )}
 
         <label style={{ display: "block", fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 4 }}>
           Customer
@@ -277,7 +308,7 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
         )}
 
         <Btn full onClick={submit} disabled={saving || !chosen || crates === 0}>
-          {saving ? "Posting…" : "Post delivery"}
+          {saving ? (editingId ? "Saving…" : "Posting…") : editingId ? "Save changes" : "Post delivery"}
         </Btn>
       </div>
 
@@ -310,9 +341,14 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   {d.status === "pending" && !d.driver_id ? (
-                    <Btn kind="ghost" small onClick={() => removeDelivery(d.id)}>
-                      ✕
-                    </Btn>
+                    <>
+                      <Btn kind="ghost" small onClick={() => startEdit(d)}>
+                        ✏️
+                      </Btn>
+                      <Btn kind="ghost" small onClick={() => removeDelivery(d.id)}>
+                        ✕
+                      </Btn>
+                    </>
                   ) : d.status === "delivered" ? (
                     <Tag color={T.green} bg={T.greenBg}>
                       delivered

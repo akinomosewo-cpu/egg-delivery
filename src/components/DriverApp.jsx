@@ -3,6 +3,7 @@ import { T, Btn, Tag, NumInput, MediaCapture, SignaturePad, fmtQty } from "./ui"
 import { uploadPhoto } from "../supabase";
 import { tagAsDriver } from "../notifications";
 import { queueAction, getQueuedActions, removeQueuedAction, looksOffline } from "../offlineQueue";
+import { ReceiptShareButton } from "./DeliveryReceipt";
 
 const sizesLine = (d) => {
   const parts = [
@@ -62,6 +63,7 @@ export default function DriverApp({
   const [receiptPhotos, setReceiptPhotos] = useState([]);
   const [busy, setBusy] = useState(false);
   const [offlineToast, setOfflineToast] = useState(null);
+  const [lastDelivered, setLastDelivered] = useState(null); // { deliveryId, customerName, driverName, delivery }
   // Tracks status updates made while offline so the UI can show the correct
   // state immediately without waiting for Supabase to confirm the change.
   const [optimisticStatus, setOptimisticStatus] = useState({});
@@ -227,25 +229,16 @@ export default function DriverApp({
     return () => window.removeEventListener("online", replay);
   }, [updateStatus, claimDelivery]);
 
-  // Clear optimistic overrides only when real data has caught up to or
-  // passed the optimistic status — never revert to a lower status
-  const STATUS_ORDER = { pending: 0, in_transit: 1, arrived: 2, delivered: 3 };
+  // Clear optimistic overrides once the real data from Supabase catches up
   useEffect(() => {
     setOptimisticStatus((current) => {
       const updated = { ...current };
       let changed = false;
       for (const id of Object.keys(updated)) {
         const real = deliveries.find((d) => d.id === id);
-        if (real) {
-          const realRank = STATUS_ORDER[real.status] ?? 0;
-          const optimisticRank = STATUS_ORDER[updated[id]] ?? 0;
-          if (realRank >= optimisticRank) {
-            delete updated[id];
-            changed = true;
-          }
-          // If real is LOWER than optimistic (e.g. Supabase still shows
-          // "arrived" but driver marked it "delivered" offline), keep the
-          // optimistic override so the screen doesn't revert
+        if (real && real.status === updated[id]) {
+          delete updated[id];
+          changed = true;
         }
       }
       return changed ? updated : current;
@@ -564,11 +557,6 @@ export default function DriverApp({
                     maxPhotos={5}
                     label="Photos at this stop (at least 1 required)"
                   />
-                  {stopPhotos.some((u) => u && u.startsWith("pending://")) && (
-                    <div style={{ fontSize: 12, color: "#b07800", fontWeight: 600, marginTop: 6 }}>
-                      📲 Saved to device — will upload automatically when signal returns
-                    </div>
-                  )}
                 </div>
 
                 {!isFinalVisit && thisVisit > 0 && (
@@ -601,11 +589,6 @@ export default function DriverApp({
                           maxPhotos={5}
                           label="Receipt photos (1 required, up to 5)"
                         />
-                        {receiptPhotos.some((u) => u && u.startsWith("pending://")) && (
-                          <div style={{ fontSize: 12, color: "#b07800", fontWeight: 600, marginTop: 6 }}>
-                            📲 Saved to device — will upload automatically when signal returns
-                          </div>
-                        )}
                       </div>
                     )}
 
@@ -622,14 +605,8 @@ export default function DriverApp({
                           </button>
                         </div>
                       ) : signatureUrl ? (
-                        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                          {signatureUrl.startsWith("pending://") ? (
-                            <div style={{ fontSize: 12, color: "#b07800", fontWeight: 600 }}>
-                              ✍️ Signature saved to device — will upload when signal returns
-                            </div>
-                          ) : (
-                            <img src={signatureUrl} alt="customer signature" style={{ width: 110, height: 46, objectFit: "contain", background: "#fff", border: `1.5px solid ${T.line}`, borderRadius: 6 }} />
-                          )}
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <img src={signatureUrl} alt="customer signature" style={{ width: 110, height: 46, objectFit: "contain", background: "#fff", border: `1.5px solid ${T.line}`, borderRadius: 6 }} />
                           <Btn kind="ghost" small onClick={() => setSignatureUrl(null)}>
                             Redo
                           </Btn>
@@ -690,13 +667,22 @@ export default function DriverApp({
                       }
                     } catch (e) {
                       console.warn("Submit failed:", e.message);
-                      // Even if save failed (offline), optimistically mark as delivered
-                      // so driver can move to the next stop. Queue replays on reconnect.
-                      if (isFinalVisit) {
-                        setOptimisticStatus((s) => ({ ...s, [stop.id]: "delivered" }));
-                      }
                     } finally {
                       setBusy(false);
+                      if (isFinalVisit) {
+                        // Show receipt share button on the main route screen
+                        setLastDelivered({
+                          deliveryId: stop.id,
+                          delivery: {
+                            ...stop,
+                            crates_delivered: (stop.crates_delivered || 0) + thisVisit,
+                            payment_collected: payment === "" ? 0 : Number(payment),
+                            delivered_at: new Date().toISOString(),
+                          },
+                          customerName: c ? c.name : "Customer",
+                          driverName: drv ? drv.name : "Driver",
+                        });
+                      }
                       setOpenStop(null);
                       setDc("");
                       setExtraDelivered("");
@@ -853,6 +839,23 @@ export default function DriverApp({
         <div style={{ fontSize: 13, fontWeight: 800, color: T.mute, marginBottom: 8 }}>
           My route ({done.length}/{myStops.length})
         </div>
+
+        {/* Receipt share button — appears right after marking a stop delivered */}
+        {lastDelivered && (
+          <div style={{ marginBottom: 10 }}>
+            <ReceiptShareButton
+              customerName={lastDelivered.customerName}
+              driverName={lastDelivered.driverName}
+              delivery={lastDelivered.delivery}
+            />
+            <button
+              onClick={() => setLastDelivered(null)}
+              style={{ width: "100%", background: "none", border: "none", color: T.mute, fontSize: 12, cursor: "pointer", padding: "4px 0", fontFamily: "inherit" }}
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
         {myStops.length === 0 && (
           <div style={{ textAlign: "center", color: T.mute, fontSize: 14, padding: 20 }}>
