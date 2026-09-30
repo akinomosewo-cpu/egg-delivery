@@ -4,7 +4,7 @@ import { T, Btn, NumInput, TextInput } from "./ui";
 // Available stock is computed live: everything ever logged as "added",
 // minus every crate ever committed to a posted delivery. Nothing to get
 // out of sync — no manual increment/decrement bookkeeping anywhere.
-export default function AdminStock({ stockEntries, deliveries, addStockEntry, drivers, stockCounts }) {
+export default function AdminStock({ stockEntries, deliveries, addStockEntry, clearStockEntries, drivers, stockCounts }) {
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -41,6 +41,16 @@ export default function AdminStock({ stockEntries, deliveries, addStockEntry, dr
         <div style={{ fontSize: 11, color: "#8A8A80", marginTop: 4 }}>
           {totalAdded} added all-time · {totalCommitted} committed to deliveries
         </div>
+        <button
+          onClick={clearStockEntries}
+          style={{
+            marginTop: 12, background: "none", border: "1px solid #555",
+            color: "#aaa", fontSize: 12, fontWeight: 700, borderRadius: 8,
+            padding: "6px 14px", cursor: "pointer", fontFamily: "inherit",
+          }}
+        >
+          🗑 Reset stock to zero
+        </button>
       </div>
 
       <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 16 }}>

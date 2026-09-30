@@ -478,6 +478,14 @@ export default function App() {
     else loadAll();
   };
 
+  const clearStockEntries = async () => {
+    const ok = window.confirm("Clear all stock entries? This resets the warehouse stock count to zero. This cannot be undone.");
+    if (!ok) return;
+    const { error } = await supabase.from("stock_entries").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    if (error) alert("Could not clear: " + error.message);
+    else loadAll();
+  };
+
   // A driver's morning warehouse count — just a reference reading, doesn't
   // feed into the stock math itself. Shared once-a-day across all drivers.
   // Records a payment a customer makes later, paying down their outstanding
@@ -947,7 +955,7 @@ export default function App() {
             ) : adminTab === "map" ? (
               <AdminMap drivers={drivers} customers={customers} driverLocations={driverLocations} deliveries={deliveries} geocodeCustomer={geocodeCustomer} />
             ) : adminTab === "stock" ? (
-              <AdminStock stockEntries={stockEntries} deliveries={allDeliveriesForStock} addStockEntry={addStockEntry} drivers={drivers} stockCounts={stockCounts} />
+              <AdminStock stockEntries={stockEntries} deliveries={allDeliveriesForStock} addStockEntry={addStockEntry} clearStockEntries={clearStockEntries} drivers={drivers} stockCounts={stockCounts} />
             ) : adminTab === "log" ? (
               <ActivityLogTable events={events} drivers={drivers} customers={customers} showAccount={true} />
             ) : adminTab === "balances" ? (
