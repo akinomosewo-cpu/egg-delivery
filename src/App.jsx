@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { supabase, today, logEvent, requestNotificationPermission, notify } from "./supabase";
 import { queueAction, getQueuedActions, removeQueuedAction, queueCount, looksOffline, getPendingPhotos, removePendingPhoto, isPendingUrl } from "./offlineQueue";
 import { T } from "./components/ui";
@@ -18,6 +18,43 @@ import AdminReceipts from "./components/AdminReceipts";
 import DriverApp from "./components/DriverApp";
 
 const ADMIN_PIN = "1003"; // change this to change the admin password
+
+// Gives a server call a deadline so a weak SIM can't leave the driver stuck
+// on "Saving…" (or hold the sync queue) — after the deadline it's treated as
+// offline and retried later. Every server write is safe to retry.
+const withTimeout = (promise, ms) =>
+  Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error("network timeout")), ms))]);
+
+// Server data + anything done offline that hasn't synced yet. Applied on
+// every refresh so the screen never "forgets" an offline action (status,
+// claim, or crates dropped off). Each queued item disappears from the queue
+// the moment the server has it, so nothing is ever counted twice.
+const RANK = { pending: 0, in_transit: 1, arrived: 2, delivered: 3 };
+async function withQueuedChanges(rows) {
+  let items = [];
+  try { items = await getQueuedActions(); } catch { return rows; }
+  if (!items.length) return rows;
+  const byId = new Map(rows.map((r) => [r.id, { ...r }]));
+  for (const it of items) {
+    const a = it.args || [];
+    const d = byId.get(a[0]);
+    if (!d) continue;
+    const up = (st) => { if ((RANK[st] ?? 0) > (RANK[d.status] ?? 0)) d.status = st; };
+    if (it.actionName === "claimDelivery") {
+      if (!d.driver_id) { d.driver_id = a[1]; d.helper_ids = a[2] || []; }
+    } else if (it.actionName === "updateStatus") {
+      up(a[1]);
+      if (a[1] === "in_transit" && !d.started_at) d.started_at = new Date(it.createdAt).toISOString();
+    } else if (it.actionName === "submitPartialDelivery") {
+      up("arrived");
+      d.crates_delivered = (d.crates_delivered || 0) + Number(a[1] || 0);
+    } else if (it.actionName === "markDelivered") {
+      up("delivered");
+      d.crates_delivered = (d.crates_delivered || 0) + Number(a[1] || 0);
+    }
+  }
+  return rows.map((r) => byId.get(r.id));
+}
 
 export default function App() {
   const [device, setDevice] = useState("driver"); // driver-first: workers open this most
@@ -68,7 +105,7 @@ export default function App() {
       setDrivers(drv.data);
       setCustomers(cus.data);
       setHelpers(hlp.data);
-      setDeliveries(del.data);
+      setDeliveries(await withQueuedChanges(del.data));
       setHiddenDeliveries(hiddenDel.data || []);
       setCrateReturns(ret.data);
       setEvents(evt.data);
@@ -120,74 +157,104 @@ export default function App() {
     return () => clearInterval(interval);
   }, [loadAll]);
 
-  // Offline queue: process anything waiting whenever we come back online,
-  // and check periodically too (some browsers don't fire 'online' reliably)
+  // Offline queue: the ONE place queued actions get replayed. Runs on
+  // reconnect, on app start, and every 15s. A lock stops overlapping runs
+  // (the online event + the timer used to fire it twice at once).
+  const queueRunning = useRef(false);
   const processQueue = useCallback(async () => {
-    if (!navigator.onLine) return;
-
-    // Step 1: upload any locally-saved photos, build URL swap map
-    const urlSwap = {};
+    if (queueRunning.current) return;
+    queueRunning.current = true;
     try {
-      const pending = await getPendingPhotos();
-      for (const p of pending) {
-        try {
-          const file = new File([p.buffer], p.name, { type: p.type });
-          const ext = p.name.split(".").pop() || "jpg";
-          const path = `${today()}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-          const { error } = await supabase.storage.from("delivery-photos").upload(path, file);
-          if (!error) {
+      // Step 1: upload every photo saved to the device while offline.
+      // Uploaded links are remembered in localStorage so a photo that
+      // uploads on one attempt is never lost if the delivery itself has
+      // to wait for the next attempt.
+      let urlSwap = {};
+      try { urlSwap = JSON.parse(localStorage.getItem("photoUrlSwap") || "{}"); } catch { urlSwap = {}; }
+      let stillPending = new Set();
+      try {
+        const pending = await getPendingPhotos();
+        for (const p of pending) {
+          try {
+            const file = new File([p.buffer], p.name, { type: p.type });
+            const ext = (p.name.split(".").pop() || "jpg").toLowerCase();
+            const path = `${today()}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+            const { error } = await withTimeout(supabase.storage.from("delivery-photos").upload(path, file), 30000);
+            if (error) throw error;
             const { data } = supabase.storage.from("delivery-photos").getPublicUrl(path);
             urlSwap[p.id] = data.publicUrl;
+            try { localStorage.setItem("photoUrlSwap", JSON.stringify(urlSwap)); } catch {}
             await removePendingPhoto(p.id);
+          } catch (e) {
+            // keep it on the device and try again next cycle — never give up
+            console.warn("Photo upload failed, will retry:", e.message);
           }
-          // no break — always try every pending photo, not just until one fails
-        } catch (e) {
-          console.warn("Pending photo upload failed, will retry next cycle:", e.message);
-          // continue to next photo — don't break
         }
-      }
-    } catch (e) {
-      console.warn("Photo queue check failed:", e.message);
-    }
-
-    const swapUrls = (urls) => {
-      if (!Array.isArray(urls)) return urls;
-      return urls.map((u) => (isPendingUrl(u) && urlSwap[u] ? urlSwap[u] : u));
-    };
-
-    // Step 2: replay queued actions with real URLs substituted
-    let items;
-    try {
-      items = await getQueuedActions();
-    } catch {
-      return;
-    }
-    for (const item of items) {
-      try {
-        if (item.actionName === "updateStatus") {
-          const [id, status, ctx] = item.args;
-          await runUpdateStatus(id, status, ctx);
-        } else if (item.actionName === "claimDelivery") {
-          await claimDelivery(...item.args);
-        } else if (item.actionName === "submitPartialDelivery") {
-          const [id, addedCrates, photos, crateExchange, ctx] = item.args;
-          await submitPartialDelivery(id, addedCrates, swapUrls(photos), crateExchange, ctx);
-        } else if (item.actionName === "markDelivered") {
-          const args = [...item.args];
-          args[2] = swapUrls(args[2]); // photoUrls
-          if (isPendingUrl(args[6]) && urlSwap[args[6]]) args[6] = urlSwap[args[6]]; // signatureUrl
-          if (isPendingUrl(args[9]) && urlSwap[args[9]]) args[9] = urlSwap[args[9]]; // receiptUrl
-          await markDelivered(...args);
-        }
-        await removeQueuedAction(item.id);
+        stillPending = new Set((await getPendingPhotos()).map((p) => p.id));
       } catch (e) {
-        if (!looksOffline(e)) await removeQueuedAction(item.id);
-        break;
+        console.warn("Photo queue check failed:", e.message);
       }
+
+      // Swap pending:// links for real ones. If a photo is STILL waiting to
+      // upload, the delivery isn't ready to sync yet — wait, so we never save
+      // a broken pending:// link to the server.
+      let notReady = false;
+      const fix = (u) => {
+        if (!isPendingUrl(u)) return u;
+        if (urlSwap[u]) return urlSwap[u];
+        if (stillPending.has(u)) { notReady = true; return u; }
+        return null; // photo no longer on device — drop the dead link
+      };
+      const fixList = (urls) => (Array.isArray(urls) ? urls.map(fix).filter(Boolean) : urls);
+
+      // Step 2: replay queued actions in the order they happened
+      let items = [];
+      try { items = await getQueuedActions(); } catch { return; }
+      const blocked = new Set(); // deliveries that hit a real error — skip their later steps
+      for (const item of items) {
+        notReady = false;
+        const deliveryId = item.args && item.args[0];
+        if (blocked.has(deliveryId)) continue;
+        try {
+          if (item.actionName === "updateStatus") {
+            const [id, status, ctx] = item.args;
+            await withTimeout(runUpdateStatus(id, status, ctx), 15000);
+          } else if (item.actionName === "claimDelivery") {
+            const [id, driverId, helperIds] = item.args;
+            await withTimeout(runClaimDelivery(id, driverId, helperIds), 15000);
+          } else if (item.actionName === "submitPartialDelivery") {
+            const [id, addedCrates, photos, crateExchange, ctx] = item.args;
+            const fixedPhotos = fixList(photos);
+            if (notReady) { blocked.add(deliveryId); continue; } // photos still uploading — this delivery waits, others carry on
+            await withTimeout(runSubmitPartial(id, addedCrates, fixedPhotos, crateExchange, ctx), 20000);
+          } else if (item.actionName === "markDelivered") {
+            const a = [...item.args];
+            a[2] = fixList(a[2]); // stop photos
+            a[6] = fix(a[6]);     // signature
+            a[9] = fix(a[9]);     // receipt
+            a[12] = fixList(a[12]); // all receipt photos
+            if (notReady) { blocked.add(deliveryId); continue; } // photos still uploading — this delivery waits, others carry on
+            await withTimeout(runMarkDelivered(...a), 20000);
+          }
+          await removeQueuedAction(item.id);
+        } catch (e) {
+          if (looksOffline(e)) break; // signal dropped again — retry later, keep order
+          // A real (non-network) error: status/claim actions are safe to drop,
+          // but never throw away a delivery — leave it and retry next cycle.
+          if (item.actionName === "updateStatus" || item.actionName === "claimDelivery") {
+            console.warn("Dropping failed queued action:", item.actionName, e.message);
+            await removeQueuedAction(item.id);
+          } else {
+            console.warn("Delivery sync failed, will retry:", e.message);
+            blocked.add(deliveryId); // keep it queued; let other deliveries sync
+          }
+        }
+      }
+      setPendingSync(await queueCount());
+      loadAll();
+    } finally {
+      queueRunning.current = false;
     }
-    const remaining = await queueCount();
-    setPendingSync(remaining);
-    loadAll();
   }, [loadAll]);
 
   useEffect(() => {
@@ -293,21 +360,29 @@ export default function App() {
 
   // Claim an unassigned delivery — guarded so two drivers can't grab the same one.
   // Returns true if the claim succeeded, false if someone else beat them to it.
-  const claimDelivery = async (id, driverId, helperIds) => {
+  // Sends a claim to the server. Returns true if claimed, false if another
+  // driver got it first. Throws on network errors.
+  const runClaimDelivery = async (id, driverId, helperIds) => {
     const { data, error } = await supabase
       .from("deliveries")
       .update({ driver_id: driverId, helper_ids: helperIds, claimed_at: new Date().toISOString() })
       .eq("id", id)
       .is("driver_id", null)
       .select();
-    if (error) throw error; // let withOfflineQueue catch network errors
+    if (error) throw error;
     if (!data || data.length === 0) {
-      loadAll();
-      return false; // someone else already claimed it
+      // Already claimed — fine if it was this same driver (a replay)
+      const { data: cur } = await supabase.from("deliveries").select("driver_id").eq("id", id).single();
+      return !!(cur && cur.driver_id === driverId);
     }
     await logEvent({ driver_id: driverId, customer_id: data[0].customer_id, delivery_id: id, event_type: "claimed" });
-    loadAll();
     return true;
+  };
+
+  const claimDelivery = async (id, driverId, helperIds) => {
+    const ok = await withTimeout(runClaimDelivery(id, driverId, helperIds), 15000); // throws offline → DriverApp queues it
+    loadAll();
+    return ok;
   };
 
   // Undo an accidental claim — only allowed before any progress has been made,
@@ -346,10 +421,20 @@ export default function App() {
   // Route status: pending -> in_transit -> arrived
   // Offline-aware: this doesn't need a photo, so it's the one action that
   // queues automatically and sends itself once signal comes back.
+  // Moves a delivery forward. Only ever moves it UP (pending → in_transit →
+  // arrived) — a late replay of "arrived" can never knock a delivered stop back.
   const runUpdateStatus = async (id, status, ctx) => {
-    const timeCol = status === "in_transit" ? { started_at: new Date().toISOString() } : status === "arrived" ? { arrived_at: new Date().toISOString() } : {};
-    const { error } = await supabase.from("deliveries").update({ status, ...timeCol }).eq("id", id);
+    const lowerThan = { in_transit: ["pending"], arrived: ["pending", "in_transit"] }[status];
+    if (!lowerThan) return;
+    const timeCol = status === "in_transit" ? { started_at: new Date().toISOString() } : { arrived_at: new Date().toISOString() };
+    const { data, error } = await supabase
+      .from("deliveries")
+      .update({ status, ...timeCol })
+      .eq("id", id)
+      .in("status", lowerThan)
+      .select("id");
     if (error) throw error;
+    if (!data || data.length === 0) return; // already at or past this status — nothing to do
     await logEvent({
       driver_id: ctx.driver_id,
       customer_id: ctx.customer_id,
@@ -359,83 +444,123 @@ export default function App() {
   };
 
   const updateStatus = async (id, status, ctx) => {
-    await runUpdateStatus(id, status, ctx);
+    await withTimeout(runUpdateStatus(id, status, ctx), 15000); // throws offline → DriverApp queues it
     loadAll();
   };
 
-  // Save a partial drop-off (driver couldn't carry the full order in one trip).
-  // Accumulates onto whatever's already been delivered so far; does NOT complete the delivery.
-  const submitPartialDelivery = async (id, addedCrates, newPhotos, crateExchange, ctx) => {
-    if (navigator.onLine) {
-      try {
-        const { data: cur, error: e1 } = await supabase
-          .from("deliveries")
-          .select("crates_delivered, photo_urls, backorder_crates, empty_crates_picked_up, empty_crates_left, extra_delivered")
-          .eq("id", id).single();
-        if (!e1) {
-          const newTotal = (cur.crates_delivered || 0) + Number(addedCrates || 0);
-          const mergedPhotos = [...(cur.photo_urls || []), ...newPhotos];
-          const { error } = await supabase.from("deliveries").update({
-            crates_delivered: newTotal, photo_urls: mergedPhotos, status: "arrived",
-            extra_delivered: (cur.extra_delivered || 0) + Number(crateExchange?.extra || 0),
-            backorder_crates: (cur.backorder_crates || 0) + Number(crateExchange?.backorder || 0),
-            empty_crates_picked_up: (cur.empty_crates_picked_up || 0) + Number(crateExchange?.emptyPickedUp || 0),
-            empty_crates_left: Number(crateExchange?.emptyLeft || 0),
-          }).eq("id", id);
-          if (!error) {
-            await logEvent({ driver_id: ctx.driver_id, customer_id: ctx.customer_id, delivery_id: id, event_type: "partial_delivered" });
-            loadAll(); return;
-          }
-        }
-      } catch {}
+  // ---- Partial drop-off ----
+  // Sends to the server; throws on any failure (used by live AND replay).
+  const runSubmitPartial = async (id, addedCrates, newPhotos, crateExchange, ctx) => {
+    // Each partial drop-off carries a unique opId. If it's already been
+    // saved (e.g. signal dropped right after the server got it), skip it so
+    // crates are never counted twice.
+    if (ctx.opId) {
+      const { data: seen, error: se } = await supabase
+        .from("delivery_events").select("id")
+        .eq("delivery_id", id).eq("event_type", "partial_delivered").eq("detail", ctx.opId).limit(1);
+      if (se) throw se;
+      if (seen && seen.length) return;
     }
-    await queueAction("submitPartialDelivery", [id, addedCrates, newPhotos, crateExchange, ctx]);
-    setDeliveries((prev) => prev.map((d) => d.id === id ? {
-      ...d, status: "arrived",
-      crates_delivered: (d.crates_delivered || 0) + Number(addedCrates || 0),
-      photo_urls: [...(d.photo_urls || []), ...newPhotos],
-    } : d));
+    const { data: cur, error: e1 } = await supabase
+      .from("deliveries")
+      .select("status, crates_delivered, photo_urls, backorder_crates, empty_crates_picked_up, extra_delivered")
+      .eq("id", id).single();
+    if (e1 && e1.code === "PGRST116") return; // delivery was deleted — nothing to save
+    if (e1) throw e1;
+    if (cur.status === "delivered") return; // already completed — don't touch it
+    const { error } = await supabase.from("deliveries").update({
+      crates_delivered: (cur.crates_delivered || 0) + Number(addedCrates || 0),
+      photo_urls: [...(cur.photo_urls || []), ...(newPhotos || [])],
+      status: "arrived",
+      extra_delivered: (cur.extra_delivered || 0) + Number(crateExchange?.extra || 0),
+      backorder_crates: (cur.backorder_crates || 0) + Number(crateExchange?.backorder || 0),
+      empty_crates_picked_up: (cur.empty_crates_picked_up || 0) + Number(crateExchange?.emptyPickedUp || 0),
+      empty_crates_left: Number(crateExchange?.emptyLeft || 0),
+    }).eq("id", id).neq("status", "delivered");
+    if (error) throw error;
+    await logEvent({ driver_id: ctx.driver_id, customer_id: ctx.customer_id, delivery_id: id, event_type: "partial_delivered", detail: ctx.opId || null });
   };
 
-  // Complete a delivery — called once cumulative delivered crates reach the assigned amount
-  const markDelivered = async (id, addedCrates, photoUrls, videoUrl, missingEggs, missingCrates, signatureUrl, sizes, payment, receiptUrl, crateExchange, ctx) => {
-    if (navigator.onLine) {
-      try {
-        const { data: cur, error: e1 } = await supabase
-          .from("deliveries")
-          .select("crates_delivered, photo_urls, backorder_crates, empty_crates_picked_up, extra_delivered")
-          .eq("id", id).single();
-        if (!e1) {
-          const finalCrates = (cur.crates_delivered || 0) + Number(addedCrates || 0);
-          const mergedPhotos = [...(cur.photo_urls || []), ...photoUrls];
-          const { error } = await supabase.from("deliveries").update({
-            status: "delivered", crates_delivered: finalCrates, eggs_delivered: 0,
-            photo_urls: mergedPhotos, video_url: videoUrl,
-            missing_eggs: missingEggs, missing_crates: missingCrates,
-            signature_url: signatureUrl,
-            big_large_delivered: sizes.bigLarge, small_large_delivered: sizes.smallLarge,
-            medium_delivered: sizes.medium, pullet_delivered: sizes.pullet,
-            extra_delivered: (cur.extra_delivered || 0) + Number(crateExchange?.extra || 0),
-            backorder_crates: (cur.backorder_crates || 0) + Number(crateExchange?.backorder || 0),
-            empty_crates_picked_up: (cur.empty_crates_picked_up || 0) + Number(crateExchange?.emptyPickedUp || 0),
-            empty_crates_left: Number(crateExchange?.emptyLeft || 0),
-            payment_collected: payment, receipt_url: receiptUrl,
-            delivered_at: new Date().toISOString(),
-          }).eq("id", id);
-          if (!error) {
-            await logEvent({ driver_id: ctx.driver_id, customer_id: ctx.customer_id, delivery_id: id, event_type: "delivered" });
-            loadAll(); return;
-          }
-        }
-      } catch {}
+  const submitPartialDelivery = async (id, addedCrates, newPhotos, crateExchange, ctx) => {
+    const opCtx = { ...ctx, opId: ctx.opId || `p-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` };
+    try {
+      if (!navigator.onLine) throw new Error("offline");
+      await withTimeout(runSubmitPartial(id, addedCrates, newPhotos, crateExchange, opCtx), 20000);
+      loadAll();
+    } catch (e) {
+      // No signal — save on the device, show it as done, sync later
+      await queueAction("submitPartialDelivery", [id, addedCrates, newPhotos, crateExchange, opCtx]);
+      setPendingSync(await queueCount());
+      setDeliveries((prev) => prev.map((d) => d.id === id ? {
+        ...d, status: "arrived",
+        crates_delivered: (d.crates_delivered || 0) + Number(addedCrates || 0),
+        photo_urls: [...(d.photo_urls || []), ...(newPhotos || [])],
+      } : d));
     }
-    await queueAction("markDelivered", [id, addedCrates, photoUrls, videoUrl, missingEggs, missingCrates, signatureUrl, sizes, payment, receiptUrl, crateExchange, ctx]);
-    setDeliveries((prev) => prev.map((d) => d.id === id ? {
-      ...d, status: "delivered",
-      crates_delivered: (d.crates_delivered || 0) + Number(addedCrates || 0),
-      photo_urls: [...(d.photo_urls || []), ...photoUrls],
+  };
+
+  // ---- Final delivery ----
+  // Sends to the server; throws on any failure (used by live AND replay).
+  // Safe to run twice: if the stop is already delivered it does nothing,
+  // so a slow-but-successful request followed by a replay can't double-count.
+  const runMarkDelivered = async (id, addedCrates, photoUrls, videoUrl, missingEggs, missingCrates, signatureUrl, sizes, payment, receiptUrl, crateExchange, ctx, receiptUrls) => {
+    const { data: cur, error: e1 } = await supabase
+      .from("deliveries")
+      .select("status, crates_delivered, photo_urls, backorder_crates, empty_crates_picked_up, extra_delivered")
+      .eq("id", id).single();
+    if (e1 && e1.code === "PGRST116") return; // delivery was deleted — nothing to save
+    if (e1) throw e1;
+    if (cur.status === "delivered") return; // already saved — nothing to do
+    const s = sizes || {};
+    const row = {
+      status: "delivered",
+      crates_delivered: (cur.crates_delivered || 0) + Number(addedCrates || 0),
+      eggs_delivered: 0,
+      photo_urls: [...(cur.photo_urls || []), ...(photoUrls || [])],
+      video_url: videoUrl || null,
+      missing_eggs: missingEggs || 0,
+      missing_crates: missingCrates || 0,
+      signature_url: signatureUrl || null,
+      big_large_delivered: s.bigLarge || 0,
+      small_large_delivered: s.smallLarge || 0,
+      medium_delivered: s.medium || 0,
+      pullet_delivered: s.pullet || 0,
+      extra_delivered: (cur.extra_delivered || 0) + Number(crateExchange?.extra || 0),
+      backorder_crates: (cur.backorder_crates || 0) + Number(crateExchange?.backorder || 0),
+      empty_crates_picked_up: (cur.empty_crates_picked_up || 0) + Number(crateExchange?.emptyPickedUp || 0),
+      empty_crates_left: Number(crateExchange?.emptyLeft || 0),
+      payment_collected: payment || 0,
+      receipt_url: receiptUrl || (receiptUrls && receiptUrls[0]) || null,
       delivered_at: new Date().toISOString(),
-    } : d));
+    };
+    if (Array.isArray(receiptUrls) && receiptUrls.length) row.receipt_urls = receiptUrls;
+    let { error } = await supabase.from("deliveries").update(row).eq("id", id).neq("status", "delivered");
+    if (error && row.receipt_urls && /receipt_urls/i.test(error.message || "")) {
+      // receipt_urls column missing on this database — save without it
+      delete row.receipt_urls;
+      ({ error } = await supabase.from("deliveries").update(row).eq("id", id).neq("status", "delivered"));
+    }
+    if (error) throw error;
+    await logEvent({ driver_id: ctx.driver_id, customer_id: ctx.customer_id, delivery_id: id, event_type: "delivered" });
+  };
+
+  const markDelivered = async (...args) => {
+    const [id, addedCrates, photoUrls] = args;
+    try {
+      if (!navigator.onLine) throw new Error("offline");
+      await withTimeout(runMarkDelivered(...args), 20000);
+      loadAll();
+    } catch (e) {
+      // No signal — save on the device, show it as delivered, sync later
+      await queueAction("markDelivered", args);
+      setPendingSync(await queueCount());
+      setDeliveries((prev) => prev.map((d) => d.id === id ? {
+        ...d, status: "delivered",
+        crates_delivered: (d.crates_delivered || 0) + Number(addedCrates || 0),
+        photo_urls: [...(d.photo_urls || []), ...(photoUrls || [])],
+        delivered_at: new Date().toISOString(),
+      } : d));
+    }
   };
 
   const addDriver = async (name) => {

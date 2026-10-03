@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { T, Btn, Tag, NumInput, MediaCapture, SignaturePad, fmtQty } from "./ui";
 import { uploadPhoto } from "../supabase";
 import { tagAsDriver } from "../notifications";
-import { queueAction, getQueuedActions, removeQueuedAction, looksOffline } from "../offlineQueue";
+import { queueAction, looksOffline } from "../offlineQueue";
 
 
 const sizesLine = (d) => {
@@ -64,19 +64,28 @@ export default function DriverApp({
   const [busy, setBusy] = useState(false);
   const [offlineToast, setOfflineToast] = useState(null);
 
-  // Tracks status updates made while offline so the UI can show the correct
-  // state immediately without waiting for Supabase to confirm the change.
-  // Persist optimistic statuses in localStorage so they survive loadAll() and
-  // page reloads. Only cleared once Supabase confirms an equal or higher status.
-  const [optimisticStatus, setOptimisticStatusRaw] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem("optimisticStatus") || "{}");
-    } catch { return {}; }
-  });
+  // Anything the driver did offline is remembered here (and in localStorage,
+  // so it survives the 5-second refresh, app restarts and reconnecting).
+  // The screen always shows the driver's own progress until the server has
+  // actually caught up — it can never jump backwards.
+  //   local[id]  = { status, at }        e.g. { status: "delivered", at: "…" }
+  //   claims[id] = { driverId, helperIds } for deliveries claimed offline
+  const loadLocal = (key) => { try { return JSON.parse(localStorage.getItem(key) || "{}"); } catch { return {}; } };
+  const [optimisticStatus, setOptimisticStatusRaw] = useState(() => loadLocal("optimisticStatus"));
   const setOptimisticStatus = (updater) => {
     setOptimisticStatusRaw((prev) => {
       const next = typeof updater === "function" ? updater(prev) : updater;
       try { localStorage.setItem("optimisticStatus", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+  const markLocal = (id, status) =>
+    setOptimisticStatus((s) => ({ ...s, [id]: { status, at: new Date().toISOString() } }));
+  const [optimisticClaims, setOptimisticClaimsRaw] = useState(() => loadLocal("optimisticClaims"));
+  const setOptimisticClaims = (updater) => {
+    setOptimisticClaimsRaw((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      try { localStorage.setItem("optimisticClaims", JSON.stringify(next)); } catch {}
       return next;
     });
   };
@@ -224,46 +233,34 @@ export default function DriverApp({
     updateDriverLocationRef.current = updateDriverLocation;
   }, [updateDriverLocation]);
 
-  // Replay queued status actions when signal returns
-  useEffect(() => {
-    const replay = async () => {
-      let actions;
-      try { actions = await getQueuedActions(); } catch { return; }
-      for (const item of actions) {
-        try {
-          if (item.actionName === "updateStatus") await updateStatus(...item.args);
-          else if (item.actionName === "claimDelivery") await claimDelivery(...item.args);
-          await removeQueuedAction(item.id);
-        } catch { /* leave for next attempt */ }
-      }
-    };
-    if (navigator.onLine) replay();
-    window.addEventListener("online", replay);
-    return () => window.removeEventListener("online", replay);
-  }, [updateStatus, claimDelivery]);
+  // (Queued actions are replayed ONLY by App.jsx's processQueue. DriverApp
+  // used to run its own replay loop, which deleted queued "Mark delivered"
+  // items without sending them — the cause of deliveries reverting.)
 
-  // Clear optimistic overrides only when real Supabase data has caught up to
-  // or exceeded the optimistic status. Never revert to a lower status —
-  // e.g. if driver marked delivered offline, keep showing delivered even if
-  // Supabase still shows arrived while the queue is replaying.
+  // Drop a local override only once the server has caught up to (or passed)
+  // it. A lower server status never wins over what the driver already did.
   const STATUS_ORDER = { pending: 0, in_transit: 1, arrived: 2, delivered: 3 };
+  const localStatusOf = (v) => (typeof v === "string" ? v : v && v.status);
   useEffect(() => {
     setOptimisticStatus((current) => {
       const updated = { ...current };
       let changed = false;
       for (const id of Object.keys(updated)) {
         const real = deliveries.find((d) => d.id === id);
-        if (real) {
-          const realRank = STATUS_ORDER[real.status] ?? 0;
-          const optimisticRank = STATUS_ORDER[updated[id]] ?? 0;
-          if (realRank >= optimisticRank) {
-            // Real data has caught up — safe to remove the override
-            delete updated[id];
-            changed = true;
-          }
-          // If real is lower (e.g. arrived < delivered), keep the optimistic
-          // override so the screen doesn't revert while queue is still syncing
+        if (!real) continue;
+        if ((STATUS_ORDER[real.status] ?? 0) >= (STATUS_ORDER[localStatusOf(updated[id])] ?? 0)) {
+          delete updated[id];
+          changed = true;
         }
+      }
+      return changed ? updated : current;
+    });
+    setOptimisticClaims((current) => {
+      const updated = { ...current };
+      let changed = false;
+      for (const id of Object.keys(updated)) {
+        const real = deliveries.find((d) => d.id === id);
+        if (real && real.driver_id) { delete updated[id]; changed = true; } // server has a driver now
       }
       return changed ? updated : current;
     });
@@ -337,13 +334,24 @@ export default function DriverApp({
       .flatMap((d) => d.helper_ids || [])
   );
   const pickableHelpers = helpers.filter((h) => !busyHelperIds.has(h.id));
-  const available = deliveries.filter((d) => !d.driver_id && d.status === "pending");
-  const myStops = deliveries.filter((d) => d.driver_id === driverId);
+  // The driver's view = server data + anything they did offline
+  const view = deliveries.map((d) => {
+    let v = d;
+    const claim = optimisticClaims[d.id];
+    if (claim && !v.driver_id) v = { ...v, driver_id: claim.driverId, helper_ids: claim.helperIds || [] };
+    const o = optimisticStatus[d.id];
+    const ls = localStatusOf(o);
+    if (ls && (STATUS_ORDER[ls] ?? 0) > (STATUS_ORDER[v.status] ?? 0)) {
+      v = { ...v, status: ls };
+      if (ls === "in_transit" && o && o.at && !v.started_at) v.started_at = o.at; // keeps the 2-min lock
+    }
+    return v;
+  });
+  const available = view.filter((d) => !d.driver_id && d.status === "pending");
+  const myStops = view.filter((d) => d.driver_id === driverId);
   const pending = myStops.filter((d) => d.status !== "delivered");
   const done = myStops.filter((d) => d.status === "delivered");
-  const stop = myStops.map((d) =>
-    optimisticStatus[d.id] ? { ...d, status: optimisticStatus[d.id] } : d
-  ).find((d) => d.id === openStop);
+  const stop = myStops.find((d) => d.id === openStop);
   const claiming = available.find((d) => d.id === claimingId);
 
   const toggleHelper = (id) => {
@@ -417,12 +425,8 @@ export default function DriverApp({
               try {
                 const result = await withOfflineQueue("claimDelivery", claimDelivery)(claiming.id, driverId, pickedHelpers);
                 if (result === "__queued__") {
-                  // Queued offline — optimistically add to my stops
-                  if (setDeliveries) {
-                    setDeliveries((prev) => prev.map((d) =>
-                      d.id === claiming.id ? { ...d, driver_id: driverId, helper_ids: pickedHelpers, status: "pending" } : d
-                    ));
-                  }
+                  // Claimed offline — keep it on my route until the server confirms
+                  setOptimisticClaims((c) => ({ ...c, [claiming.id]: { driverId, helperIds: pickedHelpers } }));
                 } else if (!result) {
                   alert("Someone else just claimed this delivery. Pick another one.");
                 }
@@ -496,7 +500,7 @@ export default function DriverApp({
                 try {
                   const result = await withOfflineQueue("updateStatus", updateStatus)(stop.id, "in_transit", { driver_id: driverId, customer_id: stop.customer_id });
                   if (result === "__queued__") {
-                    setOptimisticStatus((s) => ({ ...s, [stop.id]: "in_transit" }));
+                    markLocal(stop.id, "in_transit");
                   }
                 } catch {} finally { setBusy(false); }
               }}
@@ -519,7 +523,7 @@ export default function DriverApp({
                   try {
                     const result = await withOfflineQueue("updateStatus", updateStatus)(stop.id, "arrived", { driver_id: driverId, customer_id: stop.customer_id });
                     if (result === "__queued__") {
-                      setOptimisticStatus((s) => ({ ...s, [stop.id]: "arrived" }));
+                      markLocal(stop.id, "arrived");
                     }
                   } catch {} finally { setBusy(false); }
                 }}
@@ -681,7 +685,8 @@ export default function DriverApp({
                           payment === "" ? 0 : Number(payment),
                           receiptPhotos[0] || null,
                           crateExchange,
-                          { driver_id: driverId, customer_id: stop.customer_id }
+                          { driver_id: driverId, customer_id: stop.customer_id },
+                          receiptPhotos
                         );
                       } else {
                         await submitPartialDelivery(stop.id, thisVisit, stopPhotos, stopVideo, crateExchange, {
@@ -697,7 +702,7 @@ export default function DriverApp({
                       // even if Supabase hasn't confirmed yet. Persisted in
                       // localStorage so it survives loadAll() refreshes.
                       if (isFinalVisit) {
-                        setOptimisticStatus((s) => ({ ...s, [stop.id]: "delivered" }));
+                        markLocal(stop.id, "delivered");
                       }
                       setOpenStop(null);
                       setDc("");
