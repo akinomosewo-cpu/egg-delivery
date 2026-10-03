@@ -66,7 +66,20 @@ export default function DriverApp({
 
   // Tracks status updates made while offline so the UI can show the correct
   // state immediately without waiting for Supabase to confirm the change.
-  const [optimisticStatus, setOptimisticStatus] = useState({});
+  // Persist optimistic statuses in localStorage so they survive loadAll() and
+  // page reloads. Only cleared once Supabase confirms an equal or higher status.
+  const [optimisticStatus, setOptimisticStatusRaw] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("optimisticStatus") || "{}");
+    } catch { return {}; }
+  });
+  const setOptimisticStatus = (updater) => {
+    setOptimisticStatusRaw((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      try { localStorage.setItem("optimisticStatus", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
 
   const showOfflineToast = useCallback((msg) => {
     setOfflineToast(msg);
@@ -680,6 +693,12 @@ export default function DriverApp({
                       console.warn("Submit failed:", e.message);
                     } finally {
                       setBusy(false);
+                      // Set optimistic status immediately so the stop shows ✅
+                      // even if Supabase hasn't confirmed yet. Persisted in
+                      // localStorage so it survives loadAll() refreshes.
+                      if (isFinalVisit) {
+                        setOptimisticStatus((s) => ({ ...s, [stop.id]: "delivered" }));
+                      }
                       setOpenStop(null);
                       setDc("");
                       setExtraDelivered("");
