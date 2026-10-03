@@ -16,7 +16,7 @@ const STATUS_COLOR = {
   delivered: [T.green, T.greenBg],
 };
 
-export default function AdminDayList({ drivers, customers, helpers, deliveries, hiddenDeliveries = [], onHide, onPostpone, onUnhide }) {
+export default function AdminDayList({ drivers, customers, helpers, deliveries, hiddenDeliveries = [], onHide, onPostpone, onUnhide, onDelete }) {
   const [expandedId, setExpandedId] = useState(null);
   const [confirmId, setConfirmId] = useState(null);
   const [showHidden, setShowHidden] = useState(false);
@@ -158,6 +158,17 @@ export default function AdminDayList({ drivers, customers, helpers, deliveries, 
                           onClick={() => { onPostpone && onPostpone(d.id); setConfirmId(null); }}
                           style={{ fontSize: 11, fontWeight: 700, padding: "4px 8px", borderRadius: 6, border: "none", background: T.tan, color: T.ink, cursor: "pointer", fontFamily: "inherit" }}
                         >📅 Next day</button>
+                        {d.status === "pending" && !d.driver_id && (
+                          <button
+                            onClick={() => {
+                              if (window.confirm("Delete this delivery? This cannot be undone.")) {
+                                onDelete && onDelete(d.id);
+                                setConfirmId(null);
+                              }
+                            }}
+                            style={{ fontSize: 11, fontWeight: 700, padding: "4px 8px", borderRadius: 6, border: "none", background: "#FBE7E2", color: T.red, cursor: "pointer", fontFamily: "inherit" }}
+                          >🗑 Delete</button>
+                        )}
                         <button
                           onClick={() => setConfirmId(null)}
                           style={{ fontSize: 11, fontWeight: 700, padding: "4px 8px", borderRadius: 6, border: "none", background: "transparent", color: T.mute, cursor: "pointer", fontFamily: "inherit" }}

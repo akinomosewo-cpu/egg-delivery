@@ -3,7 +3,7 @@ import { T, Btn, Tag, NumInput, MediaCapture, SignaturePad, fmtQty } from "./ui"
 import { uploadPhoto } from "../supabase";
 import { tagAsDriver } from "../notifications";
 import { queueAction, getQueuedActions, removeQueuedAction, looksOffline } from "../offlineQueue";
-import { ReceiptShareButton } from "./DeliveryReceipt";
+
 
 const sizesLine = (d) => {
   const parts = [
@@ -63,7 +63,7 @@ export default function DriverApp({
   const [receiptPhotos, setReceiptPhotos] = useState([]);
   const [busy, setBusy] = useState(false);
   const [offlineToast, setOfflineToast] = useState(null);
-  const [lastDelivered, setLastDelivered] = useState(null); // { deliveryId, customerName, driverName, delivery }
+
   // Tracks status updates made while offline so the UI can show the correct
   // state immediately without waiting for Supabase to confirm the change.
   const [optimisticStatus, setOptimisticStatus] = useState({});
@@ -229,16 +229,27 @@ export default function DriverApp({
     return () => window.removeEventListener("online", replay);
   }, [updateStatus, claimDelivery]);
 
-  // Clear optimistic overrides once the real data from Supabase catches up
+  // Clear optimistic overrides only when real Supabase data has caught up to
+  // or exceeded the optimistic status. Never revert to a lower status —
+  // e.g. if driver marked delivered offline, keep showing delivered even if
+  // Supabase still shows arrived while the queue is replaying.
+  const STATUS_ORDER = { pending: 0, in_transit: 1, arrived: 2, delivered: 3 };
   useEffect(() => {
     setOptimisticStatus((current) => {
       const updated = { ...current };
       let changed = false;
       for (const id of Object.keys(updated)) {
         const real = deliveries.find((d) => d.id === id);
-        if (real && real.status === updated[id]) {
-          delete updated[id];
-          changed = true;
+        if (real) {
+          const realRank = STATUS_ORDER[real.status] ?? 0;
+          const optimisticRank = STATUS_ORDER[updated[id]] ?? 0;
+          if (realRank >= optimisticRank) {
+            // Real data has caught up — safe to remove the override
+            delete updated[id];
+            changed = true;
+          }
+          // If real is lower (e.g. arrived < delivered), keep the optimistic
+          // override so the screen doesn't revert while queue is still syncing
         }
       }
       return changed ? updated : current;
@@ -669,20 +680,6 @@ export default function DriverApp({
                       console.warn("Submit failed:", e.message);
                     } finally {
                       setBusy(false);
-                      if (isFinalVisit) {
-                        // Show receipt share button on the main route screen
-                        setLastDelivered({
-                          deliveryId: stop.id,
-                          delivery: {
-                            ...stop,
-                            crates_delivered: (stop.crates_delivered || 0) + thisVisit,
-                            payment_collected: payment === "" ? 0 : Number(payment),
-                            delivered_at: new Date().toISOString(),
-                          },
-                          customerName: c ? c.name : "Customer",
-                          driverName: drv ? drv.name : "Driver",
-                        });
-                      }
                       setOpenStop(null);
                       setDc("");
                       setExtraDelivered("");
@@ -840,22 +837,6 @@ export default function DriverApp({
           My route ({done.length}/{myStops.length})
         </div>
 
-        {/* Receipt share button — appears right after marking a stop delivered */}
-        {lastDelivered && (
-          <div style={{ marginBottom: 10 }}>
-            <ReceiptShareButton
-              customerName={lastDelivered.customerName}
-              driverName={lastDelivered.driverName}
-              delivery={lastDelivered.delivery}
-            />
-            <button
-              onClick={() => setLastDelivered(null)}
-              style={{ width: "100%", background: "none", border: "none", color: T.mute, fontSize: 12, cursor: "pointer", padding: "4px 0", fontFamily: "inherit" }}
-            >
-              Dismiss
-            </button>
-          </div>
-        )}
 
         {myStops.length === 0 && (
           <div style={{ textAlign: "center", color: T.mute, fontSize: 14, padding: 20 }}>

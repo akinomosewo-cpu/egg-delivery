@@ -963,7 +963,7 @@ export default function App() {
             ) : adminTab === "calendar" ? (
               <AdminCalendar customers={customers} allDeliveries={allDeliveriesForStock} />
             ) : adminTab === "today" ? (
-              <AdminDayList drivers={drivers} customers={customers} helpers={helpers} deliveries={deliveries} hiddenDeliveries={hiddenDeliveries} onHide={hideDelivery} onPostpone={postponeDelivery} onUnhide={unhideDelivery} />
+              <AdminDayList drivers={drivers} customers={customers} helpers={helpers} deliveries={deliveries} hiddenDeliveries={hiddenDeliveries} onHide={hideDelivery} onPostpone={postponeDelivery} onUnhide={unhideDelivery} onDelete={removeDelivery} />
             ) : adminTab === "missing" ? (
               <AdminMissingCrates
                 customers={customers}
