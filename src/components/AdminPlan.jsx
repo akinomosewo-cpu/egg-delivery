@@ -330,23 +330,37 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   {/* Up/Down reorder buttons — only for unclaimed pending stops */}
                   {canReorder && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4, marginRight: 4 }}>
                       <button
                         disabled={i === 0}
                         onClick={() => reorderDelivery(d.id, "up")}
                         style={{
-                          background: "none", border: `1px solid ${T.line}`, borderRadius: 4,
-                          cursor: i === 0 ? "default" : "pointer", fontSize: 11, padding: "1px 5px",
-                          opacity: i === 0 ? 0.3 : 1, lineHeight: 1,
+                          background: i === 0 ? T.tan : T.ink,
+                          border: "none",
+                          borderRadius: 8,
+                          cursor: i === 0 ? "default" : "pointer",
+                          fontSize: 16,
+                          width: 36, height: 36,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          opacity: i === 0 ? 0.25 : 1,
+                          color: i === 0 ? T.mute : T.paper,
+                          fontFamily: "inherit",
                         }}
                       >↑</button>
                       <button
                         disabled={i === arr.length - 1}
                         onClick={() => reorderDelivery(d.id, "down")}
                         style={{
-                          background: "none", border: `1px solid ${T.line}`, borderRadius: 4,
-                          cursor: i === arr.length - 1 ? "default" : "pointer", fontSize: 11, padding: "1px 5px",
-                          opacity: i === arr.length - 1 ? 0.3 : 1, lineHeight: 1,
+                          background: i === arr.length - 1 ? T.tan : T.ink,
+                          border: "none",
+                          borderRadius: 8,
+                          cursor: i === arr.length - 1 ? "default" : "pointer",
+                          fontSize: 16,
+                          width: 36, height: 36,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          opacity: i === arr.length - 1 ? 0.25 : 1,
+                          color: i === arr.length - 1 ? T.mute : T.paper,
+                          fontFamily: "inherit",
                         }}
                       >↓</button>
                     </div>
