@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { T, Btn, Tag, NumInput, fmtQty } from "./ui";
 
-export default function AdminPlan({ drivers, customers, helpers, deliveries, addDelivery, removeDelivery, updateDelivery, reorderDelivery, availableStock }) {
+export default function AdminPlan({ drivers, customers, helpers, deliveries, addDelivery, removeDelivery, updateDelivery, reorderDelivery, toggleStar, availableStock }) {
   const [search, setSearch] = useState("");
   const [customerId, setCustomerId] = useState(null);
   const todayStr = new Date().toLocaleDateString("en-CA");
@@ -283,8 +283,17 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
 
       {deliveries.length > 0 && (
         <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, overflow: "hidden" }}>
+          {(() => {
+            const starredCount = deliveries.filter((d) => d.is_starred && d.status !== "delivered").length;
+            return starredCount > 0 ? (
+              <div style={{ padding: "8px 14px", borderBottom: `1px solid ${T.line}`, background: "#FFFBEA", fontSize: 12, fontWeight: 700, color: "#B45309" }}>
+                ⭐ {starredCount} priority stop{starredCount !== 1 ? "s" : ""} — drivers will do these first before the rest unlocks
+                {starredCount > 3 && <span style={{ color: T.red, marginLeft: 8 }}>⚠ Recommended max is 3</span>}
+              </div>
+            ) : null;
+          })()}
           <div style={{ padding: "10px 14px", borderBottom: `1px solid ${T.line}`, background: T.tan, fontSize: 12, fontWeight: 700, color: T.mute }}>
-            🔢 Delivery order — use ↑↓ to change which stop drivers do first
+            🔢 Delivery order — ⭐ to prioritise · ↑↓ to reorder
           </div>
           {[...deliveries]
             .sort((a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0))
@@ -295,6 +304,7 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
               .map((id) => (helpers.find((h) => h.id === id) || {}).name)
               .filter(Boolean);
             const canReorder = reorderDelivery && d.status === "pending" && !d.driver_id;
+            const canStar = toggleStar && d.status !== "delivered";
             return (
               <div
                 key={d.id}
@@ -328,6 +338,24 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
                   </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  {/* Star button — marks stop as priority; drivers see starred stops first */}
+                  {canStar && (
+                    <button
+                      onClick={() => toggleStar(d.id, d.is_starred)}
+                      title={d.is_starred ? "Remove priority" : "Mark as priority (drivers do these first)"}
+                      style={{
+                        background: d.is_starred ? "#FEF3C7" : T.tan,
+                        border: `1.5px solid ${d.is_starred ? "#F59E0B" : T.line}`,
+                        borderRadius: 8,
+                        width: 36, height: 36,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 18, cursor: "pointer",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {d.is_starred ? "⭐" : "☆"}
+                    </button>
+                  )}
                   {/* Up/Down reorder buttons — only for unclaimed pending stops */}
                   {canReorder && (
                     <div style={{ display: "flex", flexDirection: "column", gap: 4, marginRight: 4 }}>

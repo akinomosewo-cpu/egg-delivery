@@ -343,6 +343,11 @@ export default function App() {
     loadAll();
   };
 
+  const toggleStar = async (id, currentValue) => {
+    await supabase.from("deliveries").update({ is_starred: !currentValue }).eq("id", id);
+    loadAll();
+  };
+
   const removeDelivery = async (id) => {
     const { error } = await supabase.from("deliveries").delete().eq("id", id).eq("status", "pending");
     if (error) alert("Could not remove: " + error.message);
@@ -1092,6 +1097,7 @@ export default function App() {
                 removeDelivery={removeDelivery}
                 updateDelivery={updateDelivery}
                 reorderDelivery={reorderDelivery}
+                toggleStar={toggleStar}
                 availableStock={
                   stockEntries.reduce((s, e) => s + Number(e.amount || 0), 0) -
                   allDeliveriesForStock.reduce((s, d) => s + Number(d.crates_assigned || 0), 0)

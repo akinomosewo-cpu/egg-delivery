@@ -357,11 +357,17 @@ export default function DriverApp({
   const pending = myStops.filter((d) => d.status !== "delivered");
   const done = myStops.filter((d) => d.status === "delivered");
   const stop = myStops.find((d) => d.id === openStop);
+  // Starred-first gate: if admin starred any stops and they're not all delivered yet,
+  // only those show in the queue. Once all starred are done, the rest unlock.
+  const starredIncomplete = view.filter((d) => d.is_starred && d.status !== "delivered");
+  const hasActiveStarred = starredIncomplete.length > 0;
+  const queueSource = hasActiveStarred ? available.filter((d) => d.is_starred) : available;
+
   // Allow up to 2 active stops at once. Only reveal the next queue slot when
   // the driver completes one — never just because they claimed it.
   const MAX_ACTIVE = 2;
   const slotsAvailable = Math.max(0, MAX_ACTIVE - pending.length);
-  const nextInQueue = available.slice(0, slotsAvailable); // 0, 1 or 2 items
+  const nextInQueue = queueSource.slice(0, slotsAvailable); // 0, 1 or 2 items
   const claiming = nextInQueue.find((d) => d.id === claimingId) || null;
 
   const toggleHelper = (id) => {
@@ -823,15 +829,17 @@ export default function DriverApp({
       {/* Next in queue — shows up to 2 stops, unlocks only when a slot is free */}
       <div>
         <div style={{ fontSize: 13, fontWeight: 800, color: T.mute, marginBottom: 8 }}>
-          Next {nextInQueue.length > 0 ? `(${available.length} in queue)` : "delivery"}
+          {hasActiveStarred ? "⭐ Priority stops" : "Next"} {nextInQueue.length > 0 ? `(${queueSource.length} in queue)` : "delivery"}
         </div>
         {nextInQueue.length === 0 && (
           <div style={{ textAlign: "center", color: T.mute, fontSize: 14, padding: 20, background: T.card, borderRadius: 12, border: `1.5px solid ${T.line}` }}>
             {pending.length >= MAX_ACTIVE
               ? `Complete a delivery to unlock the next stop.`
-              : available.length === 0
-                ? myStops.length > 0 ? "All deliveries complete — great work!" : "Nothing assigned yet — check back soon."
-                : "Nothing available right now."}
+              : hasActiveStarred && queueSource.length === 0
+                ? "Priority stops are in progress — more will unlock when they're done."
+                : available.length === 0
+                  ? myStops.length > 0 ? "All deliveries complete — great work!" : "Nothing assigned yet — check back soon."
+                  : "Nothing available right now."}
           </div>
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
