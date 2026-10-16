@@ -351,15 +351,18 @@ export default function DriverApp({
   const available = view
     .filter((d) => !d.driver_id && d.status === "pending")
     .sort((a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0));
-  // Only the FIRST unclaimed stop is shown to drivers — they can't skip ahead
-  const nextInQueue = available[0] || null;
   const myStops = view
     .filter((d) => d.driver_id === driverId)
     .sort((a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0));
   const pending = myStops.filter((d) => d.status !== "delivered");
   const done = myStops.filter((d) => d.status === "delivered");
   const stop = myStops.find((d) => d.id === openStop);
-  const claiming = nextInQueue && nextInQueue.id === claimingId ? nextInQueue : null;
+  // Allow up to 2 active stops at once. Only reveal the next queue slot when
+  // the driver completes one — never just because they claimed it.
+  const MAX_ACTIVE = 2;
+  const slotsAvailable = Math.max(0, MAX_ACTIVE - pending.length);
+  const nextInQueue = available.slice(0, slotsAvailable); // 0, 1 or 2 items
+  const claiming = nextInQueue.find((d) => d.id === claimingId) || null;
 
   const toggleHelper = (id) => {
     setPickedHelpers((cur) => {
@@ -817,49 +820,56 @@ export default function DriverApp({
         </div>
       )}
 
-      {/* Next in queue — only the first stop is shown, not the whole pool */}
+      {/* Next in queue — shows up to 2 stops, unlocks only when a slot is free */}
       <div>
         <div style={{ fontSize: 13, fontWeight: 800, color: T.mute, marginBottom: 8 }}>
-          Next delivery {available.length > 0 ? `(${available.length} remaining)` : ""}
+          Next {nextInQueue.length > 0 ? `(${available.length} in queue)` : "delivery"}
         </div>
-        {!nextInQueue && (
+        {nextInQueue.length === 0 && (
           <div style={{ textAlign: "center", color: T.mute, fontSize: 14, padding: 20, background: T.card, borderRadius: 12, border: `1.5px solid ${T.line}` }}>
-            {myStops.length > 0 ? "All deliveries claimed or complete." : "Nothing assigned yet — check back soon."}
+            {pending.length >= MAX_ACTIVE
+              ? `Complete a delivery to unlock the next stop.`
+              : available.length === 0
+                ? myStops.length > 0 ? "All deliveries complete — great work!" : "Nothing assigned yet — check back soon."
+                : "Nothing available right now."}
           </div>
         )}
-        {nextInQueue && (() => {
-          const c = customers.find((x) => x.id === nextInQueue.customer_id);
-          return (
-            <button
-              onClick={() => setClaimingId(nextInQueue.id)}
-              style={{
-                textAlign: "left",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                padding: "14px 16px",
-                borderRadius: 12,
-                border: `1.5px dashed ${T.yolkDark}`,
-                background: "#F5FBE6",
-                cursor: "pointer",
-                fontFamily: "inherit",
-                width: "100%",
-              }}
-            >
-              <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: T.yolkDark, marginBottom: 3, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                  ▶ Up next
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {nextInQueue.map((d, i) => {
+            const c = customers.find((x) => x.id === d.customer_id);
+            return (
+              <button
+                key={d.id}
+                onClick={() => setClaimingId(d.id)}
+                style={{
+                  textAlign: "left",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "14px 16px",
+                  borderRadius: 12,
+                  border: `1.5px dashed ${T.yolkDark}`,
+                  background: "#F5FBE6",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  width: "100%",
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: T.yolkDark, marginBottom: 3, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    {i === 0 ? "▶ Up next" : "▶ Also available"}
+                  </div>
+                  <div style={{ fontWeight: 800, fontSize: 15, color: T.ink }}>{c ? c.name : "…"}</div>
+                  <div style={{ fontSize: 13, color: T.mute }}>
+                    {c && c.area ? `${c.area} · ` : ""}
+                    {fmtQty(d.crates_assigned, d.eggs_assigned)}
+                  </div>
                 </div>
-                <div style={{ fontWeight: 800, fontSize: 15, color: T.ink }}>{c ? c.name : "…"}</div>
-                <div style={{ fontSize: 13, color: T.mute }}>
-                  {c && c.area ? `${c.area} · ` : ""}
-                  {fmtQty(nextInQueue.crates_assigned, nextInQueue.eggs_assigned)}
-                </div>
-              </div>
-              <div style={{ fontWeight: 800, fontSize: 13, color: T.ink }}>Start →</div>
-            </button>
-          );
-        })()}
+                <div style={{ fontWeight: 800, fontSize: 13, color: T.ink }}>Start →</div>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* My route */}
