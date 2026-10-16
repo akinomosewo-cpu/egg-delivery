@@ -323,7 +323,9 @@ export default function App() {
   };
 
   const reorderDelivery = async (id, direction) => {
-    // Sort today's deliveries by current sort_order and swap with neighbour
+    // Sort today's deliveries by current sort_order and swap with neighbour.
+    // Always write index-based positions (1, 2, 3…) so that existing rows
+    // with sort_order=0 (the default) get assigned real values on first swap.
     const sorted = [...deliveries]
       .filter((d) => d.delivery_date === today())
       .sort((a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0));
@@ -333,11 +335,10 @@ export default function App() {
     if (swapIdx < 0 || swapIdx >= sorted.length) return;
     const a = sorted[idx];
     const b = sorted[swapIdx];
-    const aOrder = Number(a.sort_order) || idx + 1;
-    const bOrder = Number(b.sort_order) || swapIdx + 1;
+    // Write concrete positions — never rely on the stored value being distinct
     await Promise.all([
-      supabase.from("deliveries").update({ sort_order: bOrder }).eq("id", a.id),
-      supabase.from("deliveries").update({ sort_order: aOrder }).eq("id", b.id),
+      supabase.from("deliveries").update({ sort_order: swapIdx + 1 }).eq("id", a.id),
+      supabase.from("deliveries").update({ sort_order: idx + 1 }).eq("id", b.id),
     ]);
     loadAll();
   };
