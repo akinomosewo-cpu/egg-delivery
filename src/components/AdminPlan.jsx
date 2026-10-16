@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { T, Btn, Tag, NumInput, fmtQty } from "./ui";
 
-export default function AdminPlan({ drivers, customers, helpers, deliveries, addDelivery, removeDelivery, updateDelivery, availableStock }) {
+export default function AdminPlan({ drivers, customers, helpers, deliveries, addDelivery, removeDelivery, updateDelivery, reorderDelivery, availableStock }) {
   const [search, setSearch] = useState("");
   const [customerId, setCustomerId] = useState(null);
   const todayStr = new Date().toLocaleDateString("en-CA");
@@ -16,33 +16,6 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
   const [priceMedium, setPriceMedium] = useState("");
   const [pricePullet, setPricePullet] = useState("");
   const [saving, setSaving] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-
-  const startEdit = (d) => {
-    setEditingId(d.id);
-    setCustomerId(d.customer_id);
-    setDeliveryDate(d.delivery_date || todayStr);
-    setBigLarge(d.big_large_assigned ? String(d.big_large_assigned) : "");
-    setSmallLarge(d.small_large_assigned ? String(d.small_large_assigned) : "");
-    setMedium(d.medium_assigned ? String(d.medium_assigned) : "");
-    setPullet(d.pullet_assigned ? String(d.pullet_assigned) : "");
-    setExtra(d.extra_assigned ? String(d.extra_assigned) : "");
-    // Reverse-calculate price per crate from total
-    setPriceBigLarge(d.big_large_assigned && d.price_due ? "" : "");
-    setPriceSmallLarge("");
-    setPriceMedium("");
-    setPricePullet("");
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-
-  const cancelEdit = () => {
-    setEditingId(null);
-    setCustomerId(null);
-    setSearch("");
-    setDeliveryDate(todayStr);
-    setBigLarge(""); setSmallLarge(""); setMedium(""); setPullet(""); setExtra("");
-    setPriceBigLarge(""); setPriceSmallLarge(""); setPriceMedium(""); setPricePullet("");
-  };
 
   const matches = search
     ? customers.filter(
@@ -68,7 +41,7 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
   const submit = async () => {
     if (!chosen || crates === 0) return;
     setSaving(true);
-    const row = {
+    await addDelivery({
       customer_id: chosen.id,
       crates_assigned: crates,
       eggs_assigned: 0,
@@ -79,19 +52,20 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
       extra_assigned: Number(extra) || 0,
       price_due: totalPrice,
       delivery_date: deliveryDate,
-    };
-    if (editingId) {
-      await updateDelivery(editingId, row);
-      setEditingId(null);
-    } else {
-      await addDelivery(row);
-    }
+    });
     setSaving(false);
     setSearch("");
     setCustomerId(null);
     setDeliveryDate(todayStr);
-    setBigLarge(""); setSmallLarge(""); setMedium(""); setPullet(""); setExtra("");
-    setPriceBigLarge(""); setPriceSmallLarge(""); setPriceMedium(""); setPricePullet("");
+    setBigLarge("");
+    setSmallLarge("");
+    setMedium("");
+    setPullet("");
+    setExtra("");
+    setPriceBigLarge("");
+    setPriceSmallLarge("");
+    setPriceMedium("");
+    setPricePullet("");
   };
 
   return (
@@ -114,15 +88,10 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
       </div>
 
       <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: 16 }}>
-        <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>{editingId ? "Edit delivery" : "Post a delivery"}</div>
+        <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>Post a delivery</div>
         <div style={{ fontSize: 12, color: T.mute, marginBottom: 12, fontWeight: 600 }}>
-          {editingId ? "Update the quantities, price, or date below." : "Any driver can claim it from their app — no need to assign one here."}
+          Any driver can claim it from their app — no need to assign one here.
         </div>
-        {editingId && (
-          <Btn kind="ghost" small onClick={cancelEdit} style={{ marginBottom: 10 }}>
-            ✕ Cancel edit
-          </Btn>
-        )}
 
         <label style={{ display: "block", fontSize: 12, color: T.mute, fontWeight: 600, marginBottom: 4 }}>
           Customer
@@ -308,18 +277,24 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
         )}
 
         <Btn full onClick={submit} disabled={saving || !chosen || crates === 0}>
-          {saving ? (editingId ? "Saving…" : "Posting…") : editingId ? "Save changes" : "Post delivery"}
+          {saving ? "Posting…" : "Post delivery"}
         </Btn>
       </div>
 
       {deliveries.length > 0 && (
         <div style={{ background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 12, overflow: "hidden" }}>
-          {deliveries.map((d) => {
+          <div style={{ padding: "10px 14px", borderBottom: `1px solid ${T.line}`, background: T.tan, fontSize: 12, fontWeight: 700, color: T.mute }}>
+            🔢 Delivery order — use ↑↓ to change which stop drivers do first
+          </div>
+          {[...deliveries]
+            .sort((a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0))
+            .map((d, i, arr) => {
             const c = customers.find((x) => x.id === d.customer_id);
             const drv = drivers.find((x) => x.id === d.driver_id);
             const helperNames = (d.helper_ids || [])
               .map((id) => (helpers.find((h) => h.id === id) || {}).name)
               .filter(Boolean);
+            const canReorder = reorderDelivery && d.status === "pending" && !d.driver_id;
             return (
               <div
                 key={d.id}
@@ -329,26 +304,57 @@ export default function AdminPlan({ drivers, customers, helpers, deliveries, add
                   alignItems: "center",
                   padding: "11px 14px",
                   borderBottom: `1px solid ${T.line}`,
+                  background: i === 0 ? "#F5FBE6" : "transparent",
                 }}
               >
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 14 }}>{c ? c.name : "…"}</div>
-                  <div style={{ fontSize: 12, color: T.mute }}>
-                    {fmtQty(d.crates_assigned, d.eggs_assigned)} ·{" "}
-                    {drv ? drv.name : <span style={{ color: T.yolkDark, fontWeight: 700 }}>Unclaimed</span>}
-                    {helperNames.length > 0 && ` · with ${helperNames.join(", ")}`}
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  {/* Position badge */}
+                  <div style={{
+                    minWidth: 26, height: 26, borderRadius: "50%",
+                    background: i === 0 ? T.ink : T.line,
+                    color: i === 0 ? T.paper : T.mute,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 12, fontWeight: 800, flexShrink: 0,
+                  }}>
+                    {i + 1}
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>{c ? c.name : "…"}</div>
+                    <div style={{ fontSize: 12, color: T.mute }}>
+                      {fmtQty(d.crates_assigned, d.eggs_assigned)} ·{" "}
+                      {drv ? drv.name : <span style={{ color: T.yolkDark, fontWeight: 700 }}>Unclaimed</span>}
+                      {helperNames.length > 0 && ` · with ${helperNames.join(", ")}`}
+                    </div>
                   </div>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  {/* Up/Down reorder buttons — only for unclaimed pending stops */}
+                  {canReorder && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      <button
+                        disabled={i === 0}
+                        onClick={() => reorderDelivery(d.id, "up")}
+                        style={{
+                          background: "none", border: `1px solid ${T.line}`, borderRadius: 4,
+                          cursor: i === 0 ? "default" : "pointer", fontSize: 11, padding: "1px 5px",
+                          opacity: i === 0 ? 0.3 : 1, lineHeight: 1,
+                        }}
+                      >↑</button>
+                      <button
+                        disabled={i === arr.length - 1}
+                        onClick={() => reorderDelivery(d.id, "down")}
+                        style={{
+                          background: "none", border: `1px solid ${T.line}`, borderRadius: 4,
+                          cursor: i === arr.length - 1 ? "default" : "pointer", fontSize: 11, padding: "1px 5px",
+                          opacity: i === arr.length - 1 ? 0.3 : 1, lineHeight: 1,
+                        }}
+                      >↓</button>
+                    </div>
+                  )}
                   {d.status === "pending" && !d.driver_id ? (
-                    <>
-                      <Btn kind="ghost" small onClick={() => startEdit(d)}>
-                        ✏️
-                      </Btn>
-                      <Btn kind="ghost" small onClick={() => removeDelivery(d.id)}>
-                        ✕
-                      </Btn>
-                    </>
+                    <Btn kind="ghost" small onClick={() => removeDelivery(d.id)}>
+                      ✕
+                    </Btn>
                   ) : d.status === "delivered" ? (
                     <Tag color={T.green} bg={T.greenBg}>
                       delivered

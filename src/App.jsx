@@ -308,9 +308,38 @@ export default function App() {
 
   // ---- Actions ----
   const addDelivery = async (row) => {
-    const { error } = await supabase.from("deliveries").insert({ ...row, delivery_date: row.delivery_date || today() });
+    const dateToUse = row.delivery_date || today();
+    // Auto-assign sort_order as max + 1 for this date so new deliveries go to the end of the queue
+    const { data: existing } = await supabase
+      .from("deliveries")
+      .select("sort_order")
+      .eq("delivery_date", dateToUse)
+      .order("sort_order", { ascending: false })
+      .limit(1);
+    const maxOrder = existing && existing.length > 0 ? (Number(existing[0].sort_order) || 0) : 0;
+    const { error } = await supabase.from("deliveries").insert({ ...row, delivery_date: dateToUse, sort_order: maxOrder + 1 });
     if (error) alert("Could not save: " + error.message);
     else loadAll();
+  };
+
+  const reorderDelivery = async (id, direction) => {
+    // Sort today's deliveries by current sort_order and swap with neighbour
+    const sorted = [...deliveries]
+      .filter((d) => d.delivery_date === today())
+      .sort((a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0));
+    const idx = sorted.findIndex((d) => d.id === id);
+    if (idx === -1) return;
+    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= sorted.length) return;
+    const a = sorted[idx];
+    const b = sorted[swapIdx];
+    const aOrder = Number(a.sort_order) || idx + 1;
+    const bOrder = Number(b.sort_order) || swapIdx + 1;
+    await Promise.all([
+      supabase.from("deliveries").update({ sort_order: bOrder }).eq("id", a.id),
+      supabase.from("deliveries").update({ sort_order: aOrder }).eq("id", b.id),
+    ]);
+    loadAll();
   };
 
   const removeDelivery = async (id) => {
@@ -1061,6 +1090,7 @@ export default function App() {
                 addDelivery={addDelivery}
                 removeDelivery={removeDelivery}
                 updateDelivery={updateDelivery}
+                reorderDelivery={reorderDelivery}
                 availableStock={
                   stockEntries.reduce((s, e) => s + Number(e.amount || 0), 0) -
                   allDeliveriesForStock.reduce((s, d) => s + Number(d.crates_assigned || 0), 0)
