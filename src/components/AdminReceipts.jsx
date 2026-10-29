@@ -30,7 +30,7 @@ export default function AdminReceipts({ customers }) {
 
     supabase
       .from("deliveries")
-      .select("id, customer_id, delivery_date, payment_collected, payment_method, receipt_url, status")
+      .select("id, customer_id, delivery_date, payment_collected, receipt_url, status")
       .eq("delivery_date", dateStr)
       .gt("payment_collected", 0)
       .order("customer_id", { ascending: true })
@@ -116,9 +116,7 @@ export default function AdminReceipts({ customers }) {
                 </div>
 
                 {/* Method badge if present */}
-                {d.payment_method && (
                   <div style={{ fontSize: 12, color: "#555", marginBottom: 8, fontWeight: 600 }}>
-                    via {d.payment_method}
                   </div>
                 )}
 
