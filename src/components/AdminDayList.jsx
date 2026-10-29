@@ -229,7 +229,7 @@ export default function AdminDayList({ drivers, customers, helpers, deliveries, 
                     </div>
                   )}
 
-                  {d.receipt_url && (
+                  {d.receipt_url && !d.receipt_url.startsWith("pending://") && (
                     <div style={{ marginBottom: 10 }}>
                       <div style={{ fontSize: 11, color: T.mute, fontWeight: 700, marginBottom: 4 }}>RECEIPT</div>
                       <a href={d.receipt_url} target="_blank" rel="noreferrer">
@@ -238,11 +238,11 @@ export default function AdminDayList({ drivers, customers, helpers, deliveries, 
                     </div>
                   )}
 
-                  {((d.photo_urls && d.photo_urls.length > 0) || d.video_url) && (
+                  {(((d.photo_urls && d.photo_urls.filter(p => !p.startsWith("pending://")).length > 0)) || d.video_url) && (
                     <div style={{ marginBottom: 10 }}>
                       <div style={{ fontSize: 11, color: T.mute, fontWeight: 700, marginBottom: 4 }}>PHOTOS / VIDEO</div>
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                        {(d.photo_urls || []).map((p, i) => (
+                        {(d.photo_urls || []).filter(p => !p.startsWith("pending://")).map((p, i) => (
                           <a key={i} href={p} target="_blank" rel="noreferrer">
                             <img src={p} alt={`photo ${i + 1}`} style={{ width: 54, height: 54, objectFit: "cover", borderRadius: 8, border: `1.5px solid ${T.line}` }} />
                           </a>
@@ -259,7 +259,7 @@ export default function AdminDayList({ drivers, customers, helpers, deliveries, 
 
                   <div>
                     <div style={{ fontSize: 11, color: T.mute, fontWeight: 700, marginBottom: 4 }}>SIGNATURE</div>
-                    {d.signature_url ? (
+                    {d.signature_url && !d.signature_url.startsWith("pending://") ? (
                       <a href={d.signature_url} target="_blank" rel="noreferrer">
                         <img src={d.signature_url} alt="signature" style={{ width: 110, height: 48, objectFit: "contain", background: "#fff", borderRadius: 8, border: `1.5px solid ${T.line}` }} />
                       </a>
