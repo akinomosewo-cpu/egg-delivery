@@ -32,7 +32,7 @@ export default function AdminReceipts({ customers }) {
       .from("deliveries")
       .select("id, customer_id, delivery_date, payment_collected, receipt_url, status")
       .eq("delivery_date", dateStr)
-      .gt("payment_collected", 0)
+      .not("receipt_url", "is", null)
       .order("customer_id", { ascending: true })
       .then(({ data, error: err }) => {
         if (cancelled) return;
