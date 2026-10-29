@@ -670,6 +670,11 @@ export default function DriverApp({
                   </>
                 )}
 
+                {stopPhotos.some(u => u.startsWith("pending://")) && (
+                  <div style={{ fontSize: 12, color: "#c07000", fontWeight: 700, marginBottom: 8, textAlign: "center" }}>
+                    ⏳ Photo still uploading — please wait before submitting
+                  </div>
+                )}
                 <Btn
                   full
                   kind="green"
@@ -677,6 +682,8 @@ export default function DriverApp({
                     busy ||
                     thisVisit <= 0 ||
                     stopPhotos.length === 0 ||
+                    stopPhotos.some(u => u.startsWith("pending://")) ||
+                    receiptPhotos.some(u => u.startsWith("pending://")) ||
                     (isFinalVisit && ((receiptRequired && receiptPhotos.length === 0) || (!signatureUrl && !signatureSkipped)))
                   }
                   onClick={async () => {

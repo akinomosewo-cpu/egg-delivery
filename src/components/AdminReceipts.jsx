@@ -1,29 +1,43 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { T } from "./ui";
+import { supabase } from "../supabase";
 
 const fmtDate = (d) => new Date(d).toLocaleDateString("en-NG", { day: "2-digit", month: "short", year: "numeric" });
 const fmtMoney = (n) => Number(n || 0).toLocaleString("en-NG", { minimumFractionDigits: 0 });
 
-export default function AdminReceipts({ customers, deliveries }) {
-  const today = new Date().toLocaleDateString("en-CA");
-  const [dateFrom, setDateFrom] = useState(today);
-  const [dateTo, setDateTo] = useState(today);
+export default function AdminReceipts({ customers }) {
+  const todayStr = new Date().toLocaleDateString("en-CA");
+  const [dateFrom, setDateFrom] = useState(todayStr);
+  const [dateTo, setDateTo] = useState(todayStr);
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
 
   const customerName = (id) => (customers || []).find((c) => c.id === id)?.name || "Unknown";
 
-  const rows = useMemo(() => {
-    return (deliveries || [])
-      .filter((d) => {
-        if (!d.delivery_date) return false;
-        if (d.delivery_date < dateFrom) return false;
-        if (d.delivery_date > dateTo) return false;
-        // Only show rows that have either a receipt photo or a payment
-        const hasReceipt = (d.receipt_url || (d.receipt_urls && d.receipt_urls.length > 0));
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from("deliveries")
+        .select("id, customer_id, delivery_date, payment_collected, receipt_url, receipt_urls")
+        .gte("delivery_date", dateFrom)
+        .lte("delivery_date", dateTo)
+        .order("delivery_date", { ascending: false });
+      if (cancelled) return;
+      if (error) { console.error(error); setLoading(false); return; }
+      const filtered = (data || []).filter((d) => {
+        const hasReceipt = d.receipt_url && !d.receipt_url.startsWith("pending://")
+          || (d.receipt_urls && d.receipt_urls.some(u => !u.startsWith("pending://")));
         const hasPayment = Number(d.payment_collected || 0) > 0;
         return hasReceipt || hasPayment;
-      })
-      .sort((a, b) => b.delivery_date.localeCompare(a.delivery_date));
-  }, [deliveries, dateFrom, dateTo]);
+      });
+      setRows(filtered);
+      setLoading(false);
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [dateFrom, dateTo]);
 
   const totalCollected = rows.reduce((s, d) => s + Number(d.payment_collected || 0), 0);
 
@@ -60,7 +74,9 @@ export default function AdminReceipts({ customers, deliveries }) {
       </div>
 
       {/* Records */}
-      {rows.length === 0 ? (
+      {loading ? (
+        <div style={{ textAlign: "center", color: T.mute, fontSize: 14, padding: 24 }}>Loading…</div>
+      ) : rows.length === 0 ? (
         <div style={{ textAlign: "center", color: T.mute, fontSize: 14, padding: 24 }}>
           No receipts or payments found for this date range.
         </div>
